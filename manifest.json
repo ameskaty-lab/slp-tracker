@@ -1,0 +1,19 @@
+{
+  "name": "SLP Session Tracker",
+  "short_name": "SLP Tracker",
+  "description": "Offline-capable session data tracker for speech-language therapy goals",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f8fafc",
+  "theme_color": "#4f46e5",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

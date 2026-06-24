@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>SLP Session Tracker</title>
+<link rel="manifest" href="manifest.json" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="SLP Tracker" />
+<meta name="theme-color" content="#4f46e5" />
+<link rel="apple-touch-icon" href="icon.png" />
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; font-family: -apple-system, 'DM Sans', 'Nunito', system-ui, sans-serif; background: #f8fafc; }
+  button { -webkit-appearance: none; touch-action: manipulation; }
+  textarea, input { -webkit-appearance: none; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useCallback } = React;
+
+const TIMER_OPTIONS = [
+  { label: "30s", seconds: 30 },
+  { label: "1m", seconds: 60 },
+  { label: "3m", seconds: 180 },
+  { label: "5m", seconds: 300 },
+  { label: "10m", seconds: 600 },
+  { label: "15m", seconds: 900 },
+  { label: "30m", seconds: 1800 },
+];
+
+function formatTime(s) {
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return `${m}:${sec.toString().padStart(2, "0")}`;
+}
+
+function formatTimerLabel(seconds) {
+  if (!seconds) return "";
+  const opt = TIMER_OPTIONS.find(o => o.seconds === seconds);
+  return opt ? opt.label : formatTime(seconds);
+}
+
+function playBeeps() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const beepAt = (startTime) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = "sine";
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.6, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.18);
+      osc.start(startTime);
+      osc.stop(startTime + 0.18);
+    };
+    beepAt(ctx.currentTime);
+    beepAt(ctx.currentTime + 0.25);
+    beepAt(ctx.currentTime + 0.5);
+  } catch {}
+}
+
+function makeId() {
+  return `goal_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function newGoal() {
+  return {
+    id: makeId(),
+    label: "",
+    type: "percent",
+    correct: 0,
+    incorrect: 0,
+    notes: "",
+    timerDuration: null,
+    timerRemaining: null,
+    timerRunning: false,
+    timerAlert: false,
+  };
+}
+
+function ConfirmModal({ message, onConfirm, onCancel }) {
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
+      display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999,
+    }}>
+      <div style={{
+        background: "#fff", borderRadius: 16, padding: "24px 20px",
+        maxWidth: 300, width: "90%", textAlign: "center",
+        boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+      }}>
+        <div style={{ fontSize: 15, fontWeight: 600, color: "#1e293b", marginBottom: 18, lineHeight: 1.5 }}>
+          {message}
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onCancel} style={{
+            flex: 1, padding: "10px", borderRadius: 9,
+            border: "1.5px solid #e2e8f0", background: "#f8fafc",
+            color: "#64748b", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit",
+          }}>Cancel</button>
+          <button onClick={onConfirm} style={{
+            flex: 1, padding: "10px", borderRadius: 9,
+            border: "none", background: "#ef4444",
+            color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit",
+          }}>Yes, Reset</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GoalCard({ goal, onUpdate, onRemove, index }) {
+  const intervalRef = useRef(null);
+  const [confirm, setConfirm] = useState(null);
+  const [timerOpen, setTimerOpen] = useState(true);
+
+  const tick = useCallback(() => {
+    onUpdate(goal.id, (prev) => {
+      if (prev.timerRunning && prev.timerRemaining > 0) {
+        const next = prev.timerRemaining - 1;
+        if (next === 0) {
+          try { window.navigator.vibrate && window.navigator.vibrate([300, 100, 300]); } catch {}
+          playBeeps();
+          return { ...prev, timerRemaining: 0, timerRunning: false, timerAlert: true };
+        }
+        return { ...prev, timerRemaining: next };
+      }
+      return prev;
+    });
+  }, [goal.id, onUpdate]);
+
+  useEffect(() => {
+    if (goal.timerRunning) {
+      intervalRef.current = setInterval(tick, 1000);
+    } else {
+      clearInterval(intervalRef.current);
+    }
+    return () => clearInterval(intervalRef.current);
+  }, [goal.timerRunning, tick]);
+
+  const correct = goal.correct ?? 0;
+  const incorrect = goal.incorrect ?? 0;
+  const total = goal.type === "percent" ? correct + incorrect : correct;
+  const pct = total > 0 && goal.type === "percent" ? Math.round((correct / total) * 100) : null;
+
+  const update = (fields) => onUpdate(goal.id, (prev) => ({ ...prev, ...fields }));
+
+  const handlePlus = () => update({ correct: correct + 1 });
+  const handleMinus = () => update({ incorrect: incorrect + 1 });
+  const handleUndo = () => {
+    if (goal.type === "percent") {
+      if (incorrect > 0) update({ incorrect: incorrect - 1 });
+      else if (correct > 0) update({ correct: correct - 1 });
+    } else {
+      if (correct > 0) update({ correct: correct - 1 });
+    }
+  };
+
+  const handleTimerSelect = (sec) => {
+    update({ timerDuration: sec, timerRemaining: sec, timerRunning: false, timerAlert: false });
+  };
+  const handleTimerToggle = () => {
+    if (goal.timerAlert) update({ timerAlert: false, timerRunning: false });
+    else update({ timerRunning: !goal.timerRunning, timerAlert: false });
+  };
+
+  const doConfirm = (type) => {
+    if (type === "tally") update({ correct: 0, incorrect: 0 });
+    if (type === "timer") update({ timerRemaining: goal.timerDuration, timerRunning: false, timerAlert: false });
+    setConfirm(null);
+  };
+
+  const hasTimer = goal.timerDuration != null;
+  const timerAlert = goal.timerAlert;
+
+  return (
+    <>
+      {confirm && (
+        <ConfirmModal
+          message={confirm === "tally"
+            ? "Reset all tally data for this goal? This cannot be undone."
+            : "Reset the timer for this goal?"}
+          onConfirm={() => doConfirm(confirm)}
+          onCancel={() => setConfirm(null)}
+        />
+      )}
+      <div style={{
+        background: timerAlert ? "#fff3cd" : "#ffffff",
+        border: `2px solid ${timerAlert ? "#f59e0b" : "#e2e8f0"}`,
+        borderRadius: 16,
+        padding: "16px",
+        marginBottom: 12,
+        boxShadow: "0 2px 8px rgba(0,0,0,0.07)",
+        transition: "border-color 0.3s, background 0.3s",
+      }}>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+          <span style={{
+            background: "#4f46e5", color: "#fff", borderRadius: "50%",
+            width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 12, fontWeight: 700, flexShrink: 0,
+          }}>{index + 1}</span>
+          <input
+            value={goal.label}
+            onChange={e => update({ label: e.target.value })}
+            placeholder="Goal label..."
+            style={{
+              flex: 1, border: "none", borderBottom: "2px solid #e2e8f0",
+              outline: "none", fontSize: 15, fontFamily: "inherit",
+              fontWeight: 600, color: "#1e293b", background: "transparent", padding: "2px 4px",
+            }}
+          />
+          <button onClick={() => onRemove(goal.id)} style={{
+            background: "none", border: "none", cursor: "pointer",
+            color: "#cbd5e1", fontSize: 18, lineHeight: 1, padding: 2,
+          }}>✕</button>
+        </div>
+
+        <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+          {["percent", "tally"].map(t => (
+            <button key={t} onClick={() => update({ type: t })} style={{
+              flex: 1, padding: "6px 0", borderRadius: 8, border: "2px solid",
+              borderColor: goal.type === t ? "#4f46e5" : "#e2e8f0",
+              background: goal.type === t ? "#4f46e5" : "#f8fafc",
+              color: goal.type === t ? "#fff" : "#64748b",
+              fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s",
+            }}>
+              {t === "percent" ? "% Correct" : "Tally"}
+            </button>
+          ))}
+        </div>
+
+        <div style={{
+          background: "#f1f5f9", borderRadius: 10, padding: "10px 14px",
+          marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between",
+        }}>
+          <div style={{ fontFamily: "monospace", fontSize: 22, fontWeight: 700, color: "#1e293b" }}>
+            {goal.type === "percent" ? `${correct}/${total}` : `${correct}x`}
+          </div>
+          {goal.type === "percent" && (
+            <div style={{
+              fontSize: 26, fontWeight: 800,
+              color: pct === null ? "#cbd5e1" : pct >= 80 ? "#16a34a" : pct >= 60 ? "#d97706" : "#dc2626",
+            }}>
+              {pct === null ? "—%" : `${pct}%`}
+            </div>
+          )}
+          {goal.type === "tally" && (
+            <div style={{ fontSize: 13, color: "#94a3b8", fontWeight: 600 }}>occurrences</div>
+          )}
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+          <button onClick={handlePlus} style={{
+            flex: goal.type === "percent" ? 1 : 2,
+            padding: "14px 0", borderRadius: 12, border: "none",
+            background: "#22c55e", color: "#fff", fontSize: 24, fontWeight: 700,
+            cursor: "pointer", boxShadow: "0 3px 0 #16a34a",
+          }}>+</button>
+          {goal.type === "percent" && (
+            <button onClick={handleMinus} style={{
+              flex: 1, padding: "14px 0", borderRadius: 12, border: "none",
+              background: "#ef4444", color: "#fff", fontSize: 24, fontWeight: 700,
+              cursor: "pointer", boxShadow: "0 3px 0 #b91c1c",
+            }}>−</button>
+          )}
+          <button onClick={handleUndo} style={{
+            padding: "14px 12px", borderRadius: 12, border: "2px solid #e2e8f0",
+            background: "#f8fafc", color: "#64748b", fontSize: 12, fontWeight: 700, cursor: "pointer",
+            fontFamily: "inherit",
+          }}>↩ Undo</button>
+          <button onClick={() => setConfirm("tally")} title="Reset all data for this goal" style={{
+            padding: "14px 12px", borderRadius: 12, border: "2px solid #fecaca",
+            background: "#fff5f5", color: "#ef4444", fontSize: 16, fontWeight: 700, cursor: "pointer",
+          }}>↺</button>
+        </div>
+
+        <div>
+          <button onClick={() => setTimerOpen(v => !v)} style={{
+            display: "flex", alignItems: "center", width: "100%",
+            gap: 6, background: "none", border: "none", cursor: "pointer",
+            padding: "4px 0", marginBottom: timerOpen ? 8 : 0,
+            fontFamily: "inherit",
+          }}>
+            <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#94a3b8" }}>
+              Timer
+            </span>
+            {hasTimer && !timerOpen && (
+              <span style={{ fontSize: 12, color: "#4f46e5", fontWeight: 700 }}>
+                {formatTimerLabel(goal.timerDuration)}
+                {goal.timerRunning ? " ▶" : ""}
+                {timerAlert ? " ⏰" : ""}
+              </span>
+            )}
+            <span style={{ fontSize: 12, marginLeft: "auto", color: "#cbd5e1" }}>
+              {timerOpen ? "▲" : "▼"}
+            </span>
+          </button>
+
+          {timerOpen && (
+            !hasTimer ? (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                {TIMER_OPTIONS.map(opt => (
+                  <button key={opt.seconds} onClick={() => handleTimerSelect(opt.seconds)} style={{
+                    padding: "5px 10px", borderRadius: 6, border: "1.5px solid #e2e8f0",
+                    background: "#f8fafc", color: "#475569", fontSize: 12, fontWeight: 600,
+                    cursor: "pointer", fontFamily: "inherit",
+                  }}>{opt.label}</button>
+                ))}
+              </div>
+            ) : (
+              <div style={{
+                background: timerAlert ? "#fef3c7" : "#f1f5f9",
+                borderRadius: 10, padding: "10px 12px",
+                border: `1.5px solid ${timerAlert ? "#f59e0b" : "#e2e8f0"}`,
+              }}>
+                {timerAlert && (
+                  <div style={{ color: "#92400e", fontWeight: 700, fontSize: 13, marginBottom: 6, textAlign: "center" }}>
+                    ⏰ Time's up!
+                  </div>
+                )}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
+                  <span style={{
+                    fontFamily: "monospace", fontSize: 22, fontWeight: 700,
+                    color: timerAlert ? "#92400e" : goal.timerRemaining < 10 ? "#dc2626" : "#1e293b",
+                  }}>
+                    {formatTime(goal.timerRemaining)}
+                  </span>
+                  <div style={{ display: "flex", gap: 5 }}>
+                    <button onClick={handleTimerToggle} style={{
+                      padding: "6px 12px", borderRadius: 7, border: "none",
+                      background: goal.timerRunning ? "#f59e0b" : "#4f46e5",
+                      color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit",
+                    }}>{goal.timerRunning ? "⏸ Pause" : timerAlert ? "Dismiss" : "▶ Start"}</button>
+                    <button onClick={() => setConfirm("timer")} title="Reset timer" style={{
+                      padding: "6px 10px", borderRadius: 7, border: "1.5px solid #e2e8f0",
+                      background: "#fff", color: "#64748b", fontWeight: 700, fontSize: 14, cursor: "pointer",
+                    }}>↺</button>
+                    <button onClick={() => update({ timerDuration: null, timerRemaining: null, timerRunning: false, timerAlert: false })} style={{
+                      padding: "6px 10px", borderRadius: 7, border: "1.5px solid #fecaca",
+                      background: "#fff", color: "#ef4444", fontWeight: 700, fontSize: 11, cursor: "pointer",
+                    }}>✕</button>
+                  </div>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                  {TIMER_OPTIONS.map(opt => (
+                    <button key={opt.seconds} onClick={() => handleTimerSelect(opt.seconds)} style={{
+                      padding: "3px 8px", borderRadius: 5,
+                      border: `1.5px solid ${goal.timerDuration === opt.seconds ? "#4f46e5" : "#e2e8f0"}`,
+                      background: goal.timerDuration === opt.seconds ? "#ede9fe" : "#f8fafc",
+                      color: goal.timerDuration === opt.seconds ? "#4f46e5" : "#64748b",
+                      fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+                    }}>{opt.label}</button>
+                  ))}
+                </div>
+              </div>
+            )
+          )}
+        </div>
+
+        <div style={{ marginTop: 10 }}>
+          <textarea
+            value={goal.notes}
+            onChange={e => update({ notes: e.target.value })}
+            placeholder="Notes for this goal..."
+            rows={2}
+            style={{
+              width: "100%", borderRadius: 8, border: "1.5px solid #e2e8f0",
+              padding: "8px 10px", fontFamily: "inherit", fontSize: 13, color: "#334155",
+              resize: "vertical", outline: "none", background: "#fafafa", boxSizing: "border-box",
+            }}
+          />
+        </div>
+      </div>
+    </>
+  );
+}
+
+function SummaryLine({ goal, index }) {
+  const label = goal.label || `Goal ${index + 1}`;
+  const correct = goal.correct ?? 0;
+  const incorrect = goal.incorrect ?? 0;
+  const total = goal.type === "percent" ? correct + incorrect : correct;
+  const pct = total > 0 && goal.type === "percent" ? Math.round((correct / total) * 100) : null;
+  const timerLabel = goal.timerDuration ? formatTimerLabel(goal.timerDuration) : null;
+
+  let dataStr = "";
+  if (goal.type === "percent") {
+    dataStr = `${correct}/${total} — ${pct ?? "—"}% accuracy`;
+  } else {
+    dataStr = timerLabel ? `${total}x / ${timerLabel}` : `${total}x`;
+  }
+
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <span style={{ fontWeight: 600, color: "#e2e8f0", fontSize: 14 }}>{label}</span>
+      <span style={{ color: "#94a3b8", fontSize: 13 }}> — </span>
+      <span style={{ color: "#cbd5e1", fontSize: 13, fontFamily: "monospace" }}>{dataStr}</span>
+      {goal.notes.trim() && (
+        <span style={{ color: "#94a3b8", fontSize: 13 }}>; {goal.notes.trim()}</span>
+      )}
+    </div>
+  );
+}
+
+const STORAGE_KEY = "slp_tracker_v2";
+
+function App() {
+  const [goals, setGoals] = useState(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.goals && parsed.goals.length > 0) return parsed.goals;
+      }
+    } catch {}
+    return [newGoal(), newGoal()];
+  });
+
+  const [reinforcers, setReinforcers] = useState(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) return JSON.parse(saved).reinforcers || "";
+    } catch {}
+    return "";
+  });
+
+  const [showSummary, setShowSummary] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ goals, reinforcers }));
+    } catch {}
+  }, [goals, reinforcers]);
+
+  const updateGoal = useCallback((id, updater) => {
+    setGoals(prev => prev.map(g =>
+      g.id === id
+        ? (typeof updater === "function" ? updater(g) : { ...g, ...updater })
+        : g
+    ));
+  }, []);
+
+  const removeGoal = (id) => setGoals(prev => prev.filter(g => g.id !== id));
+  const addGoal = () => {
+    if (goals.length < 5) setGoals(prev => [...prev, newGoal()]);
+  };
+
+  const buildSummaryHTML = () => {
+    const now = new Date();
+    const dateStr = now.toLocaleDateString("en-US", {
+      weekday: "long", month: "long", day: "numeric", year: "numeric"
+    });
+    let html = `<p><strong>${dateStr}</strong></p>`;
+    goals.forEach((g, i) => {
+      const label = g.label || `Goal ${i + 1}`;
+      const correct = g.correct ?? 0;
+      const incorrect = g.incorrect ?? 0;
+      const total = g.type === "percent" ? correct + incorrect : correct;
+      const pct = total > 0 && g.type === "percent" ? Math.round((correct / total) * 100) : null;
+      const timerLabel = g.timerDuration ? formatTimerLabel(g.timerDuration) : null;
+      let dataStr = g.type === "percent"
+        ? `${correct}/${total} — ${pct ?? "—"}% accuracy`
+        : timerLabel ? `${total}x / ${timerLabel}` : `${total}x`;
+      let line = `${label} — ${dataStr}`;
+      if (g.notes.trim()) line += `; ${g.notes.trim()}`;
+      html += `<p>${line}</p>`;
+    });
+    if (reinforcers.trim()) {
+      html += `<p><em>Reinforcers/Activities: ${reinforcers.trim()}</em></p>`;
+    }
+    return html;
+  };
+
+  const buildSummaryPlainText = () => {
+    const now = new Date();
+    const dateStr = now.toLocaleDateString("en-US", {
+      weekday: "long", month: "long", day: "numeric", year: "numeric"
+    });
+    let lines = [dateStr, ""];
+    goals.forEach((g, i) => {
+      const label = g.label || `Goal ${i + 1}`;
+      const correct = g.correct ?? 0;
+      const incorrect = g.incorrect ?? 0;
+      const total = g.type === "percent" ? correct + incorrect : correct;
+      const pct = total > 0 && g.type === "percent" ? Math.round((correct / total) * 100) : null;
+      const timerLabel = g.timerDuration ? formatTimerLabel(g.timerDuration) : null;
+      let dataStr = g.type === "percent"
+        ? `${correct}/${total} — ${pct ?? "—"}% accuracy`
+        : timerLabel ? `${total}x / ${timerLabel}` : `${total}x`;
+      let line = `${label} — ${dataStr}`;
+      if (g.notes.trim()) line += `; ${g.notes.trim()}`;
+      lines.push(line);
+      lines.push("");
+    });
+    if (reinforcers.trim()) lines.push(`Reinforcers/Activities: ${reinforcers.trim()}`);
+    return lines.join("\n").trim();
+  };
+
+  const handleCopy = async () => {
+    const html = buildSummaryHTML();
+    const text = buildSummaryPlainText();
+    try {
+      if (window.ClipboardItem) {
+        const item = new ClipboardItem({
+          "text/html": new Blob([html], { type: "text/html" }),
+          "text/plain": new Blob([text], { type: "text/plain" }),
+        });
+        await navigator.clipboard.write([item]);
+      } else {
+        await navigator.clipboard.writeText(text);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      try {
+        await navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch {}
+    }
+  };
+
+  const handleNewSession = () => {
+    setGoals([newGoal(), newGoal()]);
+    setReinforcers("");
+    setShowSummary(false);
+    try { localStorage.removeItem(STORAGE_KEY); } catch {}
+  };
+
+  return (
+    <div style={{
+      maxWidth: 480, margin: "0 auto", minHeight: "100vh",
+      background: "#f8fafc",
+      fontFamily: "'DM Sans', 'Nunito', system-ui, sans-serif",
+      paddingBottom: 100,
+    }}>
+      <div style={{
+        background: "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)",
+        padding: "20px 20px 16px", color: "#fff",
+      }}>
+        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, opacity: 0.75, textTransform: "uppercase", marginBottom: 2 }}>
+          Session Tracker
+        </div>
+        <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.5 }}>SLP Data Collection</div>
+      </div>
+
+      <div style={{ padding: "16px 16px 0" }}>
+        {goals.map((g, i) => (
+          <GoalCard key={g.id} goal={g} index={i} onUpdate={updateGoal} onRemove={removeGoal} />
+        ))}
+        {goals.length < 5 && (
+          <button onClick={addGoal} style={{
+            width: "100%", padding: "12px", borderRadius: 12,
+            border: "2px dashed #c7d2fe", background: "#eef2ff",
+            color: "#4f46e5", fontWeight: 700, fontSize: 14,
+            cursor: "pointer", fontFamily: "inherit", marginBottom: 12,
+          }}>+ Add Goal ({goals.length}/5)</button>
+        )}
+
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
+            Reinforcers / Activities
+          </div>
+          <textarea
+            value={reinforcers}
+            onChange={e => setReinforcers(e.target.value)}
+            placeholder="e.g. bubbles, iPad time, puzzle..."
+            rows={2}
+            style={{
+              width: "100%", borderRadius: 10, border: "1.5px solid #e2e8f0",
+              padding: "10px 12px", fontFamily: "inherit", fontSize: 14, color: "#334155",
+              resize: "vertical", outline: "none", background: "#fff", boxSizing: "border-box",
+            }}
+          />
+        </div>
+      </div>
+
+      {showSummary && (
+        <div style={{
+          margin: "0 16px 16px", background: "#1e293b",
+          borderRadius: 14, padding: 16, color: "#e2e8f0",
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.5, color: "#94a3b8", textTransform: "uppercase", marginBottom: 12 }}>
+            Session Summary
+          </div>
+          {goals.map((g, i) => <SummaryLine key={g.id} goal={g} index={i} />)}
+          {reinforcers.trim() && (
+            <div style={{ borderTop: "1px solid #334155", paddingTop: 12, marginTop: 8, fontSize: 13, color: "#94a3b8" }}>
+              <span style={{ fontWeight: 700, color: "#cbd5e1" }}>Reinforcers/Activities:</span> {reinforcers.trim()}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+            <button onClick={handleCopy} style={{
+              flex: 1, padding: "10px", borderRadius: 9, border: "none",
+              background: copied ? "#22c55e" : "#4f46e5",
+              color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer",
+              fontFamily: "inherit", transition: "background 0.2s",
+            }}>{copied ? "✓ Copied!" : "Copy to Clipboard"}</button>
+            <button onClick={handleNewSession} style={{
+              padding: "10px 14px", borderRadius: 9, border: "1.5px solid #475569",
+              background: "transparent", color: "#94a3b8", fontWeight: 700,
+              fontSize: 13, cursor: "pointer", fontFamily: "inherit",
+            }}>New Session</button>
+          </div>
+        </div>
+      )}
+
+      <div style={{
+        position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)",
+        width: "100%", maxWidth: 480, background: "#fff",
+        borderTop: "1.5px solid #e2e8f0", padding: "12px 16px",
+        display: "flex", gap: 10, boxSizing: "border-box", zIndex: 100,
+        paddingBottom: "calc(12px + env(safe-area-inset-bottom))",
+      }}>
+        <button onClick={() => setShowSummary(v => !v)} style={{
+          flex: 1, padding: "13px", borderRadius: 12, border: "none",
+          background: "linear-gradient(135deg, #4f46e5, #7c3aed)",
+          color: "#fff", fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit",
+        }}>{showSummary ? "Hide Summary" : "End Session →"}</button>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+
+<script>
+  // Register service worker for offline support
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(err => {
+        console.log('Service worker registration failed:', err);
+      });
+    });
+  }
+</script>
+
+</body>
+</html>
