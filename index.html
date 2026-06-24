@@ -24,17 +24,7 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-<script>
-  // Configure Babel to use the classic JSX runtime (React.createElement),
-  // which never emits import/require statements — required for plain
-  // (non-module) <script> tags to run correctly in the browser.
-  Babel.registerPreset("custom-react-classic", {
-    presets: [
-      [Babel.availablePresets["react"], { runtime: "classic" }]
-    ]
-  });
-</script>
-<script type="text/babel" data-presets="custom-react-classic">
+<script type="text/plain" id="app-source">
 const { useState, useEffect, useRef, useCallback } = React;
 
 const TIMER_OPTIONS = [
@@ -647,6 +637,22 @@ function App() {
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(<App />);
+</script>
+
+<script>
+  // Manually compile and run the app source above. We use type="text/plain"
+  // on that script tag (not "text/babel") so babel-standalone's automatic
+  // scanner never touches it — that scanner always layers on a CommonJS
+  // module transform, which produces require() calls browsers can't run.
+  // Here we call Babel.transform() ourselves with explicit options: classic
+  // JSX runtime (no auto-imports) and sourceType "script" (no module
+  // transform at all), then execute the resulting plain JS directly.
+  const appSource = document.getElementById("app-source").textContent;
+  const compiled = Babel.transform(appSource, {
+    presets: [[Babel.availablePresets.react, { runtime: "classic" }]],
+    sourceType: "script",
+  }).code;
+  (0, eval)(compiled);
 </script>
 
 <script>
