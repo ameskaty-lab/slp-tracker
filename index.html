@@ -15,6 +15,7 @@
   body { margin: 0; font-family: -apple-system, 'DM Sans', 'Nunito', system-ui, sans-serif; background: #f8fafc; }
   button { -webkit-appearance: none; touch-action: manipulation; }
   textarea, input { -webkit-appearance: none; }
+  .student-bar::-webkit-scrollbar { display: none; }
 </style>
 </head>
 <body>
@@ -70,13 +71,13 @@ function playBeeps() {
   } catch {}
 }
 
-function makeId() {
-  return `goal_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+function makeId(prefix) {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
 function newGoal() {
   return {
-    id: makeId(),
+    id: makeId("goal"),
     label: "",
     type: "percent",
     correct: 0,
@@ -89,7 +90,29 @@ function newGoal() {
   };
 }
 
-function ConfirmModal({ message, onConfirm, onCancel }) {
+function goalFromTemplate(t) {
+  return {
+    ...newGoal(),
+    label: t.label || "",
+    type: t.type === "tally" ? "tally" : "percent",
+    timerDuration: t.timerDuration ?? null,
+    timerRemaining: t.timerDuration ?? null,
+  };
+}
+
+function templatesFromGoals(goals) {
+  return goals.map(g => ({
+    label: g.label,
+    type: g.type,
+    timerDuration: g.timerDuration ?? null,
+  }));
+}
+
+function defaultSession() {
+  return { goals: [newGoal(), newGoal()], reinforcers: "" };
+}
+
+function ConfirmModal({ message, confirmLabel, confirmColor, onConfirm, onCancel }) {
   return (
     <div style={{
       position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
@@ -111,9 +134,55 @@ function ConfirmModal({ message, onConfirm, onCancel }) {
           }}>Cancel</button>
           <button onClick={onConfirm} style={{
             flex: 1, padding: "10px", borderRadius: 9,
-            border: "none", background: "#ef4444",
+            border: "none", background: confirmColor || "#ef4444",
             color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit",
-          }}>Yes, Reset</button>
+          }}>{confirmLabel || "Yes"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PromptModal({ title, placeholder, initialValue, onSubmit, onCancel }) {
+  const [value, setValue] = useState(initialValue || "");
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
+      display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999,
+    }}>
+      <div style={{
+        background: "#fff", borderRadius: 16, padding: "24px 20px",
+        maxWidth: 320, width: "90%",
+        boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+      }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: "#1e293b", marginBottom: 14, textAlign: "center" }}>
+          {title}
+        </div>
+        <input
+          autoFocus
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter" && value.trim()) onSubmit(value.trim()); }}
+          placeholder={placeholder}
+          style={{
+            width: "100%", borderRadius: 9, border: "1.5px solid #e2e8f0",
+            padding: "10px 12px", fontSize: 15, fontFamily: "inherit",
+            outline: "none", color: "#1e293b", marginBottom: 14, boxSizing: "border-box",
+          }}
+        />
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onCancel} style={{
+            flex: 1, padding: "10px", borderRadius: 9,
+            border: "1.5px solid #e2e8f0", background: "#f8fafc",
+            color: "#64748b", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit",
+          }}>Cancel</button>
+          <button
+            onClick={() => { if (value.trim()) onSubmit(value.trim()); }}
+            style={{
+              flex: 1, padding: "10px", borderRadius: 9,
+              border: "none", background: "#4f46e5", opacity: value.trim() ? 1 : 0.5,
+              color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit",
+            }}>Save</button>
         </div>
       </div>
     </div>
@@ -191,6 +260,7 @@ function GoalCard({ goal, onUpdate, onRemove, index }) {
           message={confirm === "tally"
             ? "Reset all tally data for this goal? This cannot be undone."
             : "Reset the timer for this goal?"}
+          confirmLabel="Yes, Reset"
           onConfirm={() => doConfirm(confirm)}
           onCancel={() => setConfirm(null)}
         />
@@ -414,48 +484,345 @@ function SummaryLine({ goal, index }) {
   );
 }
 
-const STORAGE_KEY = "slp_tracker_v2";
+function StudentBar({ roster, selectedId, onSelect, onAdd, onManage }) {
+  const pill = (active) => ({
+    padding: "7px 14px", borderRadius: 999, border: "2px solid",
+    borderColor: active ? "#4f46e5" : "#e2e8f0",
+    background: active ? "#4f46e5" : "#fff",
+    color: active ? "#fff" : "#475569",
+    fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit",
+    whiteSpace: "nowrap", flexShrink: 0,
+  });
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 16px 0" }}>
+      <div className="student-bar" style={{
+        display: "flex", gap: 6, overflowX: "auto", flex: 1,
+        WebkitOverflowScrolling: "touch", paddingBottom: 4,
+        scrollbarWidth: "none",
+      }}>
+        <button onClick={() => onSelect("quick")} style={pill(selectedId === "quick")}>Quick</button>
+        {roster.map(s => (
+          <button key={s.id} onClick={() => onSelect(s.id)} style={pill(selectedId === s.id)}>{s.name}</button>
+        ))}
+        <button onClick={onAdd} style={{
+          padding: "7px 14px", borderRadius: 999, border: "2px dashed #c7d2fe",
+          background: "#eef2ff", color: "#4f46e5", fontWeight: 700, fontSize: 13,
+          cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0,
+        }}>+ Student</button>
+      </div>
+      <button onClick={onManage} title="Manage roster" style={{
+        padding: "7px 10px", borderRadius: 10, border: "2px solid #e2e8f0",
+        background: "#fff", color: "#64748b", fontSize: 14, cursor: "pointer", flexShrink: 0,
+        marginBottom: 4,
+      }}>⚙</button>
+    </div>
+  );
+}
+
+function RosterPanel({ roster, onRename, onDelete, onShare, onImport, onClose, shareStatus }) {
+  const [importText, setImportText] = useState("");
+  const [importMsg, setImportMsg] = useState(null);
+  const [renaming, setRenaming] = useState(null);
+  const [deleting, setDeleting] = useState(null);
+
+  const handleImport = () => {
+    const result = onImport(importText);
+    setImportMsg(result);
+    if (result.ok) setImportText("");
+  };
+
+  return (
+    <div style={{
+      margin: "10px 16px 4px", background: "#fff", border: "2px solid #e2e8f0",
+      borderRadius: 14, padding: 14,
+    }}>
+      {renaming && (
+        <PromptModal
+          title={`Rename ${renaming.name}`}
+          placeholder="Student name..."
+          initialValue={renaming.name}
+          onSubmit={(name) => { onRename(renaming.id, name); setRenaming(null); }}
+          onCancel={() => setRenaming(null)}
+        />
+      )}
+      {deleting && (
+        <ConfirmModal
+          message={`Remove ${deleting.name} and their saved goals? This cannot be undone.`}
+          confirmLabel="Yes, Remove"
+          onConfirm={() => { onDelete(deleting.id); setDeleting(null); }}
+          onCancel={() => setDeleting(null)}
+        />
+      )}
+      <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#94a3b8" }}>
+          Manage Roster
+        </span>
+        <button onClick={onClose} style={{
+          marginLeft: "auto", background: "none", border: "none", cursor: "pointer",
+          color: "#cbd5e1", fontSize: 16, lineHeight: 1,
+        }}>✕</button>
+      </div>
+
+      {roster.length === 0 && (
+        <div style={{ fontSize: 13, color: "#94a3b8", marginBottom: 10 }}>
+          No students yet. Tap "+ Student" above to add one.
+        </div>
+      )}
+      {roster.map(s => (
+        <div key={s.id} style={{
+          display: "flex", alignItems: "center", gap: 8, padding: "7px 0",
+          borderBottom: "1px solid #f1f5f9",
+        }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: "#1e293b", flex: 1 }}>{s.name}</span>
+          <span style={{ fontSize: 11, color: "#94a3b8" }}>{(s.goals || []).length} goal{(s.goals || []).length === 1 ? "" : "s"}</span>
+          <button onClick={() => setRenaming(s)} style={{
+            padding: "4px 10px", borderRadius: 7, border: "1.5px solid #e2e8f0",
+            background: "#f8fafc", color: "#64748b", fontSize: 12, fontWeight: 700,
+            cursor: "pointer", fontFamily: "inherit",
+          }}>Rename</button>
+          <button onClick={() => setDeleting(s)} style={{
+            padding: "4px 8px", borderRadius: 7, border: "1.5px solid #fecaca",
+            background: "#fff5f5", color: "#ef4444", fontSize: 12, fontWeight: 700, cursor: "pointer",
+          }}>✕</button>
+        </div>
+      ))}
+
+      <div style={{ marginTop: 12 }}>
+        <button onClick={onShare} disabled={roster.length === 0} style={{
+          width: "100%", padding: "10px", borderRadius: 9, border: "none",
+          background: roster.length === 0 ? "#e2e8f0" : "#4f46e5",
+          color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit",
+        }}>{shareStatus || "Share Roster (AirDrop / Messages / Copy)"}</button>
+        <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4, textAlign: "center" }}>
+          Sends a roster code to your other device.
+        </div>
+      </div>
+
+      <div style={{ marginTop: 12 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#94a3b8", marginBottom: 6 }}>
+          Import Roster Code
+        </div>
+        <textarea
+          value={importText}
+          onChange={e => { setImportText(e.target.value); setImportMsg(null); }}
+          placeholder="Paste a roster code from your other device..."
+          rows={2}
+          style={{
+            width: "100%", borderRadius: 8, border: "1.5px solid #e2e8f0",
+            padding: "8px 10px", fontFamily: "monospace", fontSize: 11, color: "#334155",
+            resize: "vertical", outline: "none", background: "#fafafa", boxSizing: "border-box",
+          }}
+        />
+        <button onClick={handleImport} disabled={!importText.trim()} style={{
+          width: "100%", marginTop: 6, padding: "9px", borderRadius: 9,
+          border: "1.5px solid #c7d2fe", background: importText.trim() ? "#eef2ff" : "#f8fafc",
+          color: importText.trim() ? "#4f46e5" : "#cbd5e1",
+          fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit",
+        }}>Import (adds students)</button>
+        {importMsg && (
+          <div style={{
+            fontSize: 12, fontWeight: 600, marginTop: 6, textAlign: "center",
+            color: importMsg.ok ? "#16a34a" : "#dc2626",
+          }}>{importMsg.text}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const STORAGE_KEY = "slp_tracker_v3";
+const OLD_STORAGE_KEY = "slp_tracker_v2";
+
+function loadStore() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed && parsed.sessions) {
+        return {
+          roster: Array.isArray(parsed.roster) ? parsed.roster : [],
+          selectedId: parsed.selectedId || "quick",
+          sessions: parsed.sessions,
+        };
+      }
+    }
+  } catch {}
+  // Migrate from the old single-session format so nothing is lost
+  let quick = null;
+  try {
+    const old = localStorage.getItem(OLD_STORAGE_KEY);
+    if (old) {
+      const parsed = JSON.parse(old);
+      if (parsed && parsed.goals && parsed.goals.length > 0) {
+        quick = { goals: parsed.goals, reinforcers: parsed.reinforcers || "" };
+      }
+    }
+  } catch {}
+  return {
+    roster: [],
+    selectedId: "quick",
+    sessions: quick ? { quick } : { quick: defaultSession() },
+  };
+}
 
 function App() {
-  const [goals, setGoals] = useState(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed.goals && parsed.goals.length > 0) return parsed.goals;
-      }
-    } catch {}
-    return [newGoal(), newGoal()];
-  });
-
-  const [reinforcers, setReinforcers] = useState(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) return JSON.parse(saved).reinforcers || "";
-    } catch {}
-    return "";
-  });
-
+  const [store, setStore] = useState(loadStore);
   const [showSummary, setShowSummary] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showRoster, setShowRoster] = useState(false);
+  const [addingStudent, setAddingStudent] = useState(false);
+  const [shareStatus, setShareStatus] = useState(null);
+
+  const { roster, selectedId, sessions } = store;
+  const session = sessions[selectedId] || defaultSession();
+  const goals = session.goals;
+  const reinforcers = session.reinforcers;
+  const selectedStudent = roster.find(s => s.id === selectedId) || null;
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ goals, reinforcers }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
     } catch {}
-  }, [goals, reinforcers]);
+  }, [store]);
 
-  const updateGoal = useCallback((id, updater) => {
-    setGoals(prev => prev.map(g =>
-      g.id === id
-        ? (typeof updater === "function" ? updater(g) : { ...g, ...updater })
-        : g
-    ));
+  // Update the current session; if a student is selected, keep their saved
+  // goal templates in sync so revised wording auto-loads next time.
+  const setSession = useCallback((updater) => {
+    setStore(prev => {
+      const cur = prev.sessions[prev.selectedId] || defaultSession();
+      const next = typeof updater === "function" ? updater(cur) : updater;
+      const sessions = { ...prev.sessions, [prev.selectedId]: next };
+      let roster = prev.roster;
+      if (prev.selectedId !== "quick") {
+        roster = prev.roster.map(s =>
+          s.id === prev.selectedId ? { ...s, goals: templatesFromGoals(next.goals) } : s
+        );
+      }
+      return { ...prev, sessions, roster };
+    });
   }, []);
 
-  const removeGoal = (id) => setGoals(prev => prev.filter(g => g.id !== id));
-  const addGoal = () => {
-    if (goals.length < 5) setGoals(prev => [...prev, newGoal()]);
+  const updateGoal = useCallback((id, updater) => {
+    setSession(prev => ({
+      ...prev,
+      goals: prev.goals.map(g =>
+        g.id === id
+          ? (typeof updater === "function" ? updater(g) : { ...g, ...updater })
+          : g
+      ),
+    }));
+  }, [setSession]);
+
+  const removeGoal = (id) => setSession(prev => ({ ...prev, goals: prev.goals.filter(g => g.id !== id) }));
+  const addGoal = () => setSession(prev =>
+    prev.goals.length < 5 ? { ...prev, goals: [...prev.goals, newGoal()] } : prev
+  );
+  const setReinforcers = (val) => setSession(prev => ({ ...prev, reinforcers: val }));
+
+  const selectStudent = (sid) => {
+    setShowSummary(false);
+    setStore(prev => {
+      let sessions = prev.sessions;
+      if (!sessions[sid]) {
+        let goals;
+        if (sid === "quick") {
+          goals = [newGoal(), newGoal()];
+        } else {
+          const st = prev.roster.find(s => s.id === sid);
+          goals = (st && st.goals && st.goals.length > 0)
+            ? st.goals.map(goalFromTemplate)
+            : [newGoal(), newGoal()];
+        }
+        sessions = { ...sessions, [sid]: { goals, reinforcers: "" } };
+      }
+      return { ...prev, sessions, selectedId: sid };
+    });
+  };
+
+  const addStudent = (name) => {
+    const id = makeId("student");
+    setAddingStudent(false);
+    setShowSummary(false);
+    setStore(prev => ({
+      ...prev,
+      roster: [...prev.roster, { id, name, goals: [] }],
+      selectedId: id,
+      sessions: { ...prev.sessions, [id]: defaultSession() },
+    }));
+  };
+
+  const renameStudent = (id, name) => {
+    setStore(prev => ({
+      ...prev,
+      roster: prev.roster.map(s => (s.id === id ? { ...s, name } : s)),
+    }));
+  };
+
+  const deleteStudent = (id) => {
+    setStore(prev => {
+      const sessions = { ...prev.sessions };
+      delete sessions[id];
+      return {
+        ...prev,
+        roster: prev.roster.filter(s => s.id !== id),
+        selectedId: prev.selectedId === id ? "quick" : prev.selectedId,
+        sessions,
+      };
+    });
+  };
+
+  const shareRoster = async () => {
+    const payload = JSON.stringify({
+      slpRoster: 1,
+      students: roster.map(s => ({ name: s.name, goals: s.goals || [] })),
+    });
+    if (navigator.share) {
+      try {
+        await navigator.share({ text: payload });
+        return;
+      } catch {}
+    }
+    try {
+      await navigator.clipboard.writeText(payload);
+      setShareStatus("✓ Roster code copied!");
+      setTimeout(() => setShareStatus(null), 2500);
+    } catch {
+      setShareStatus("Could not share — try again");
+      setTimeout(() => setShareStatus(null), 2500);
+    }
+  };
+
+  const importRoster = (text) => {
+    try {
+      // Tolerate extra text around the JSON (e.g. from a Messages paste)
+      const start = text.indexOf("{");
+      const end = text.lastIndexOf("}");
+      if (start === -1 || end === -1) throw new Error();
+      const parsed = JSON.parse(text.slice(start, end + 1));
+      if (parsed.slpRoster !== 1 || !Array.isArray(parsed.students)) throw new Error();
+      const existingNames = new Set(roster.map(s => s.name.trim().toLowerCase()));
+      const toAdd = parsed.students
+        .filter(s => s && typeof s.name === "string" && s.name.trim())
+        .filter(s => !existingNames.has(s.name.trim().toLowerCase()))
+        .map(s => ({
+          id: makeId("student"),
+          name: s.name.trim(),
+          goals: Array.isArray(s.goals)
+            ? s.goals.map(t => ({
+                label: typeof t.label === "string" ? t.label : "",
+                type: t.type === "tally" ? "tally" : "percent",
+                timerDuration: typeof t.timerDuration === "number" ? t.timerDuration : null,
+              }))
+            : [],
+        }));
+      if (toAdd.length === 0) {
+        return { ok: false, text: "No new students found (already on your roster?)" };
+      }
+      setStore(prev => ({ ...prev, roster: [...prev.roster, ...toAdd] }));
+      return { ok: true, text: `✓ Added ${toAdd.length} student${toAdd.length === 1 ? "" : "s"}` };
+    } catch {
+      return { ok: false, text: "That doesn't look like a roster code — paste the whole thing" };
+    }
   };
 
   const buildSummaryHTML = () => {
@@ -533,11 +900,16 @@ function App() {
     }
   };
 
+  // New Session: for a student, keep their goal labels but zero the data.
+  // For Quick mode, start completely fresh (old behavior).
   const handleNewSession = () => {
-    setGoals([newGoal(), newGoal()]);
-    setReinforcers("");
     setShowSummary(false);
-    try { localStorage.removeItem(STORAGE_KEY); } catch {}
+    setSession(prev => ({
+      goals: selectedId === "quick"
+        ? [newGoal(), newGoal()]
+        : prev.goals.map(g => goalFromTemplate({ label: g.label, type: g.type, timerDuration: g.timerDuration })),
+      reinforcers: "",
+    }));
   };
 
   return (
@@ -547,6 +919,15 @@ function App() {
       fontFamily: "'DM Sans', 'Nunito', system-ui, sans-serif",
       paddingBottom: 100,
     }}>
+      {addingStudent && (
+        <PromptModal
+          title="Add Student"
+          placeholder="Student name or initials..."
+          onSubmit={addStudent}
+          onCancel={() => setAddingStudent(false)}
+        />
+      )}
+
       <div style={{
         background: "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)",
         padding: "20px 20px 16px", color: "#fff",
@@ -554,10 +935,32 @@ function App() {
         <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, opacity: 0.75, textTransform: "uppercase", marginBottom: 2 }}>
           Session Tracker
         </div>
-        <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.5 }}>SLP Data Collection</div>
+        <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.5 }}>
+          {selectedStudent ? selectedStudent.name : "SLP Data Collection"}
+        </div>
       </div>
 
-      <div style={{ padding: "16px 16px 0" }}>
+      <StudentBar
+        roster={roster}
+        selectedId={selectedId}
+        onSelect={selectStudent}
+        onAdd={() => setAddingStudent(true)}
+        onManage={() => setShowRoster(v => !v)}
+      />
+
+      {showRoster && (
+        <RosterPanel
+          roster={roster}
+          onRename={renameStudent}
+          onDelete={deleteStudent}
+          onShare={shareRoster}
+          onImport={importRoster}
+          onClose={() => setShowRoster(false)}
+          shareStatus={shareStatus}
+        />
+      )}
+
+      <div style={{ padding: "12px 16px 0" }}>
         {goals.map((g, i) => (
           <GoalCard key={g.id} goal={g} index={i} onUpdate={updateGoal} onRemove={removeGoal} />
         ))}
@@ -594,7 +997,7 @@ function App() {
           borderRadius: 14, padding: 16, color: "#e2e8f0",
         }}>
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.5, color: "#94a3b8", textTransform: "uppercase", marginBottom: 12 }}>
-            Session Summary
+            Session Summary{selectedStudent ? ` — ${selectedStudent.name}` : ""}
           </div>
           {goals.map((g, i) => <SummaryLine key={g.id} goal={g} index={i} />)}
           {reinforcers.trim() && (
