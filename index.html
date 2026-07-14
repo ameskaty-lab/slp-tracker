@@ -78,11 +78,16 @@ function makeId(prefix) {
 function newGoal() {
   return {
     id: makeId("goal"),
+    tid: makeId("t"),
     label: "",
     type: "percent",
     correct: 0,
     incorrect: 0,
     notes: "",
+    fullGoal: "",
+    target: null,
+    ruleMode: "row",
+    ruleN: 3,
     timerDuration: null,
     timerRemaining: null,
     timerRunning: false,
@@ -93,19 +98,83 @@ function newGoal() {
 function goalFromTemplate(t) {
   return {
     ...newGoal(),
+    tid: t.tid || makeId("t"),
     label: t.label || "",
     type: t.type === "tally" ? "tally" : "percent",
     timerDuration: t.timerDuration ?? null,
     timerRemaining: t.timerDuration ?? null,
+    fullGoal: t.fullGoal || "",
+    target: typeof t.target === "number" ? t.target : null,
+    ruleMode: t.ruleMode === "total" ? "total" : "row",
+    ruleN: typeof t.ruleN === "number" ? t.ruleN : 3,
   };
 }
 
 function templatesFromGoals(goals) {
   return goals.map(g => ({
+    tid: g.tid,
     label: g.label,
     type: g.type,
     timerDuration: g.timerDuration ?? null,
+    fullGoal: g.fullGoal || "",
+    target: typeof g.target === "number" ? g.target : null,
+    ruleMode: g.ruleMode === "total" ? "total" : "row",
+    ruleN: typeof g.ruleN === "number" ? g.ruleN : 3,
   }));
+}
+
+function normalizeGoalFields(g) {
+  return {
+    ...g,
+    tid: g.tid || makeId("t"),
+    fullGoal: g.fullGoal || "",
+    target: typeof g.target === "number" ? g.target : null,
+    ruleMode: g.ruleMode === "total" ? "total" : "row",
+    ruleN: typeof g.ruleN === "number" ? g.ruleN : 3,
+  };
+}
+
+function pointsFor(history, tid) {
+  const pts = [];
+  (history || []).forEach(entry => {
+    (entry.goals || []).forEach(hg => {
+      if (hg.tid === tid) pts.push({ date: entry.date, correct: hg.correct || 0, incorrect: hg.incorrect || 0 });
+    });
+  });
+  return pts;
+}
+
+function pointPasses(p, type, target) {
+  if (type === "percent") {
+    const total = p.correct + p.incorrect;
+    return total > 0 && Math.round((p.correct / total) * 100) >= target;
+  }
+  return p.correct >= target;
+}
+
+function isAtCriteria(goal, pastPoints) {
+  if (typeof goal.target !== "number" || goal.target <= 0) return false;
+  const points = [...(pastPoints || [])];
+  const curTotal = (goal.correct || 0) + (goal.incorrect || 0);
+  if (curTotal > 0) points.push({ date: new Date().toISOString(), correct: goal.correct || 0, incorrect: goal.incorrect || 0 });
+  if (points.length === 0) return false;
+  if (goal.ruleMode === "total") {
+    const now = new Date();
+    const monthPts = points.filter(p => {
+      const d = new Date(p.date);
+      return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+    });
+    if (monthPts.length === 0) return false;
+    const c = monthPts.reduce((s, p) => s + p.correct, 0);
+    if (goal.type === "percent") {
+      const t = monthPts.reduce((s, p) => s + p.correct + p.incorrect, 0);
+      return t > 0 && Math.round((c / t) * 100) >= goal.target;
+    }
+    return c >= goal.target;
+  }
+  const n = goal.ruleN || 3;
+  if (points.length < n) return false;
+  return points.slice(-n).every(p => pointPasses(p, goal.type, goal.target));
 }
 
 function defaultSession() {
@@ -189,10 +258,11 @@ function PromptModal({ title, placeholder, initialValue, onSubmit, onCancel }) {
   );
 }
 
-function GoalCard({ goal, onUpdate, onRemove, index }) {
+function GoalCard({ goal, onUpdate, onRemove, index, history, atCriteria }) {
   const intervalRef = useRef(null);
   const [confirm, setConfirm] = useState(null);
   const [timerOpen, setTimerOpen] = useState(true);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   const tick = useCallback(() => {
     onUpdate(goal.id, (prev) => {
@@ -281,6 +351,7 @@ function GoalCard({ goal, onUpdate, onRemove, index }) {
             width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center",
             fontSize: 12, fontWeight: 700, flexShrink: 0,
           }}>{index + 1}</span>
+          {atCriteria && <span title="At criteria — review">🎯</span>}
           <input
             value={goal.label}
             onChange={e => update({ label: e.target.value })}
@@ -436,6 +507,88 @@ function GoalCard({ goal, onUpdate, onRemove, index }) {
                 </div>
               </div>
             )
+          )}
+        </div>
+
+        <div style={{ marginTop: 10 }}>
+          <button onClick={() => setDetailsOpen(v => !v)} style={{
+            display: "flex", alignItems: "center", width: "100%", gap: 6,
+            background: "none", border: "none", cursor: "pointer", padding: "4px 0",
+            fontFamily: "inherit",
+          }}>
+            <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#94a3b8" }}>
+              Goal Details
+            </span>
+            {typeof goal.target === "number" && !detailsOpen && (
+              <span style={{ fontSize: 11, color: "#4f46e5", fontWeight: 700 }}>
+                {goal.target}{goal.type === "percent" ? "%" : "x"} · {goal.ruleMode === "total" ? "month total" : `${goal.ruleN} in a row`}
+              </span>
+            )}
+            <span style={{ fontSize: 12, marginLeft: "auto", color: "#cbd5e1" }}>{detailsOpen ? "▲" : "▼"}</span>
+          </button>
+          {detailsOpen && (
+            <div style={{ background: "#f8fafc", border: "1.5px solid #e2e8f0", borderRadius: 10, padding: 10 }}>
+              <textarea
+                value={goal.fullGoal}
+                onChange={e => update({ fullGoal: e.target.value })}
+                placeholder="Full goal wording & criteria (kept out of daily view)..."
+                rows={2}
+                style={{
+                  width: "100%", borderRadius: 8, border: "1.5px solid #e2e8f0",
+                  padding: "8px 10px", fontFamily: "inherit", fontSize: 12, color: "#334155",
+                  resize: "vertical", outline: "none", background: "#fff", boxSizing: "border-box",
+                  marginBottom: 8,
+                }}
+              />
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>Target</span>
+                <input
+                  type="number"
+                  value={goal.target ?? ""}
+                  onChange={e => update({ target: e.target.value === "" ? null : Number(e.target.value) })}
+                  placeholder="—"
+                  style={{
+                    width: 56, borderRadius: 7, border: "1.5px solid #e2e8f0", padding: "5px 8px",
+                    fontSize: 13, fontFamily: "inherit", outline: "none", color: "#1e293b",
+                  }}
+                />
+                <span style={{ fontSize: 12, color: "#94a3b8" }}>{goal.type === "percent" ? "%" : "x"}</span>
+                <button onClick={() => update({ ruleMode: "row" })} style={{
+                  padding: "5px 9px", borderRadius: 7,
+                  border: `1.5px solid ${goal.ruleMode !== "total" ? "#4f46e5" : "#e2e8f0"}`,
+                  background: goal.ruleMode !== "total" ? "#ede9fe" : "#fff",
+                  color: goal.ruleMode !== "total" ? "#4f46e5" : "#64748b",
+                  fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+                }}>in a row</button>
+                {goal.ruleMode !== "total" && (
+                  <input
+                    type="number"
+                    value={goal.ruleN}
+                    onChange={e => update({ ruleN: Math.max(1, Number(e.target.value) || 1) })}
+                    style={{
+                      width: 40, borderRadius: 7, border: "1.5px solid #e2e8f0", padding: "5px 8px",
+                      fontSize: 13, fontFamily: "inherit", outline: "none", color: "#1e293b",
+                    }}
+                  />
+                )}
+                <button onClick={() => update({ ruleMode: "total" })} style={{
+                  padding: "5px 9px", borderRadius: 7,
+                  border: `1.5px solid ${goal.ruleMode === "total" ? "#4f46e5" : "#e2e8f0"}`,
+                  background: goal.ruleMode === "total" ? "#ede9fe" : "#fff",
+                  color: goal.ruleMode === "total" ? "#4f46e5" : "#64748b",
+                  fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+                }}>month total</button>
+              </div>
+              {history && history.length > 0 && (
+                <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 8, fontFamily: "monospace" }}>
+                  {history.slice(-4).map((p, i) => {
+                    const t = p.correct + p.incorrect;
+                    const s = goal.type === "percent" ? `${p.correct}/${t}` : `${p.correct}x`;
+                    return <span key={i} style={{ marginRight: 8 }}>{new Date(p.date).toLocaleDateString("en-US", { month: "numeric", day: "numeric" })} {s}</span>;
+                  })}
+                </div>
+              )}
+            </div>
           )}
         </div>
 
@@ -639,11 +792,17 @@ function loadStore() {
     if (saved) {
       const parsed = JSON.parse(saved);
       if (parsed && parsed.sessions) {
-        return {
-          roster: Array.isArray(parsed.roster) ? parsed.roster : [],
-          selectedId: parsed.selectedId || "quick",
-          sessions: parsed.sessions,
-        };
+        const roster = (Array.isArray(parsed.roster) ? parsed.roster : []).map(s => ({
+          ...s,
+          history: Array.isArray(s.history) ? s.history : [],
+          goals: (s.goals || []).map(normalizeGoalFields),
+        }));
+        const sessions = {};
+        Object.keys(parsed.sessions).forEach(k => {
+          const sess = parsed.sessions[k] || {};
+          sessions[k] = { goals: (sess.goals || []).map(normalizeGoalFields), reinforcers: sess.reinforcers || "" };
+        });
+        return { roster, selectedId: parsed.selectedId || "quick", sessions };
       }
     }
   } catch {}
@@ -678,6 +837,7 @@ function App() {
   const goals = session.goals;
   const reinforcers = session.reinforcers;
   const selectedStudent = roster.find(s => s.id === selectedId) || null;
+  const studentHistory = selectedStudent ? (selectedStudent.history || []) : [];
 
   useEffect(() => {
     try {
@@ -809,9 +969,14 @@ function App() {
           name: s.name.trim(),
           goals: Array.isArray(s.goals)
             ? s.goals.map(t => ({
+                tid: makeId("t"),
                 label: typeof t.label === "string" ? t.label : "",
                 type: t.type === "tally" ? "tally" : "percent",
                 timerDuration: typeof t.timerDuration === "number" ? t.timerDuration : null,
+                fullGoal: typeof t.fullGoal === "string" ? t.fullGoal : "",
+                target: typeof t.target === "number" ? t.target : null,
+                ruleMode: t.ruleMode === "total" ? "total" : "row",
+                ruleN: typeof t.ruleN === "number" ? t.ruleN : 3,
               }))
             : [],
         }));
@@ -904,12 +1069,27 @@ function App() {
   // For Quick mode, start completely fresh (old behavior).
   const handleNewSession = () => {
     setShowSummary(false);
-    setSession(prev => ({
-      goals: selectedId === "quick"
+    setStore(prev => {
+      const cur = prev.sessions[prev.selectedId] || defaultSession();
+      let roster = prev.roster;
+      if (prev.selectedId !== "quick") {
+        const logged = cur.goals
+          .filter(g => (g.correct || 0) + (g.incorrect || 0) > 0)
+          .map(g => ({ tid: g.tid, label: g.label, type: g.type, correct: g.correct || 0, incorrect: g.incorrect || 0 }));
+        roster = prev.roster.map(s => {
+          if (s.id !== prev.selectedId) return s;
+          const history = logged.length > 0
+            ? [...(s.history || []), { date: new Date().toISOString(), goals: logged }].slice(-40)
+            : (s.history || []);
+          return { ...s, history };
+        });
+      }
+      const goals = prev.selectedId === "quick"
         ? [newGoal(), newGoal()]
-        : prev.goals.map(g => goalFromTemplate({ label: g.label, type: g.type, timerDuration: g.timerDuration })),
-      reinforcers: "",
-    }));
+        : cur.goals.map(goalFromTemplate);
+      const sessions = { ...prev.sessions, [prev.selectedId]: { goals, reinforcers: "" } };
+      return { ...prev, roster, sessions };
+    });
   };
 
   return (
@@ -962,7 +1142,7 @@ function App() {
 
       <div style={{ padding: "12px 16px 0" }}>
         {goals.map((g, i) => (
-          <GoalCard key={g.id} goal={g} index={i} onUpdate={updateGoal} onRemove={removeGoal} />
+          <GoalCard key={g.id} goal={g} index={i} onUpdate={updateGoal} onRemove={removeGoal} history={pointsFor(studentHistory, g.tid)} atCriteria={isAtCriteria(g, pointsFor(studentHistory, g.tid))} />
         ))}
         {goals.length < 5 && (
           <button onClick={addGoal} style={{
@@ -1000,6 +1180,11 @@ function App() {
             Session Summary{selectedStudent ? ` — ${selectedStudent.name}` : ""}
           </div>
           {goals.map((g, i) => <SummaryLine key={g.id} goal={g} index={i} />)}
+          {goals.some(g => isAtCriteria(g, pointsFor(studentHistory, g.tid))) && (
+            <div style={{ background: "#312e81", borderRadius: 9, padding: "8px 10px", fontSize: 12, color: "#c7d2fe", marginBottom: 8 }}>
+              🎯 At criteria — review: {goals.filter(g => isAtCriteria(g, pointsFor(studentHistory, g.tid))).map((g, i) => g.label || `Goal ${i + 1}`).join("; ")} <span style={{ opacity: 0.7 }}>(screen only — not copied)</span>
+            </div>
+          )}
           {reinforcers.trim() && (
             <div style={{ borderTop: "1px solid #334155", paddingTop: 12, marginTop: 8, fontSize: 13, color: "#94a3b8" }}>
               <span style={{ fontWeight: 700, color: "#cbd5e1" }}>Reinforcers/Activities:</span> {reinforcers.trim()}
