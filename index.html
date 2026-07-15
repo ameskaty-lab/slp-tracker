@@ -50,6 +50,40 @@ function formatTimerLabel(seconds) {
   return opt ? opt.label : formatTime(seconds);
 }
 
+function parseGoalText(text) {
+  const t = String(text || "").toLowerCase();
+  const out = {};
+  let m = t.match(/(\d+)\s*(?:\/|of|out of)\s*(\d+)\s*(?:opportunit|accuracy)/);
+  if (m) {
+    out.type = "percent"; out.ruleMode = "opps";
+    out.target = Number(m[1]); out.targetOf = Number(m[2]);
+  }
+  if (out.type === undefined) {
+    m = t.match(/(\d+)\s*%\s*(?:accuracy|of opportunit)/) || t.match(/with\s+(\d+)\s*%/);
+    if (m) { out.type = "percent"; out.target = Number(m[1]); out.ruleMode = "row"; out.ruleN = 3; }
+  }
+  if (out.type === undefined) {
+    m = t.match(/(\d+)\s*(?:x\b|times?\b)/);
+    if (m) { out.type = "tally"; out.target = Number(m[1]); out.ruleMode = "row"; out.ruleN = 3; }
+  }
+  m = t.match(/across\s+(?:at least\s+)?(\d+)\s+consecutive\s+sessions/);
+  if (m) { out.ruleMode = "row"; out.ruleN = Number(m[1]); }
+  else {
+    m = t.match(/across\s+(?:at least\s+)?(\d+)\s+(?:separate\s+|different\s+)?sessions/);
+    if (m) { out.ruleMode = "across"; out.ruleN = Number(m[1]); }
+  }
+  m = t.match(/(\d+)[\s-]*minutes?\b/);
+  if (m) {
+    const secs = Number(m[1]) * 60;
+    if (TIMER_OPTIONS.some(o => o.seconds === secs)) out.timerDuration = secs;
+  }
+  if (out.type === undefined && out.timerDuration) {
+    out.type = "tally"; out.target = 1;
+    if (out.ruleMode === undefined) { out.ruleMode = "row"; out.ruleN = 3; }
+  }
+  return out;
+}
+
 function playBeeps() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -85,8 +119,11 @@ function newGoal() {
     incorrect: 0,
     notes: "",
     skipped: false,
+    items: [],
+    activeItem: 0,
     fullGoal: "",
     target: null,
+    targetOf: null,
     ruleMode: "row",
     ruleN: 3,
     timerDuration: null,
@@ -106,8 +143,11 @@ function goalFromTemplate(t) {
     timerRemaining: t.timerDuration ?? null,
     fullGoal: t.fullGoal || "",
     target: typeof t.target === "number" ? t.target : null,
-    ruleMode: t.ruleMode === "total" ? "total" : "row",
+    targetOf: typeof t.targetOf === "number" ? t.targetOf : null,
+    ruleMode: ["total", "opps", "across"].includes(t.ruleMode) ? t.ruleMode : "row",
     ruleN: typeof t.ruleN === "number" ? t.ruleN : 3,
+    items: (t.items || []).map(it => ({ name: typeof it === "string" ? it : String((it && it.name) || ""), correct: 0, incorrect: 0 })),
+    activeItem: 0,
   };
 }
 
@@ -119,8 +159,10 @@ function templatesFromGoals(goals) {
     timerDuration: g.timerDuration ?? null,
     fullGoal: g.fullGoal || "",
     target: typeof g.target === "number" ? g.target : null,
-    ruleMode: g.ruleMode === "total" ? "total" : "row",
+    targetOf: typeof g.targetOf === "number" ? g.targetOf : null,
+    ruleMode: ["total", "opps", "across"].includes(g.ruleMode) ? g.ruleMode : "row",
     ruleN: typeof g.ruleN === "number" ? g.ruleN : 3,
+    items: (g.items || []).map(it => ({ name: it.name })),
   }));
 }
 
@@ -131,8 +173,11 @@ function normalizeGoalFields(g) {
     skipped: !!g.skipped,
     fullGoal: g.fullGoal || "",
     target: typeof g.target === "number" ? g.target : null,
-    ruleMode: g.ruleMode === "total" ? "total" : "row",
+    targetOf: typeof g.targetOf === "number" ? g.targetOf : null,
+    ruleMode: ["total", "opps", "across"].includes(g.ruleMode) ? g.ruleMode : "row",
     ruleN: typeof g.ruleN === "number" ? g.ruleN : 3,
+    items: Array.isArray(g.items) ? g.items.map(it => ({ name: String((it && it.name) || (typeof it === "string" ? it : "")), correct: (it && it.correct) || 0, incorrect: (it && it.incorrect) || 0 })) : [],
+    activeItem: typeof g.activeItem === "number" ? g.activeItem : 0,
   };
 }
 
@@ -144,6 +189,31 @@ function pointsFor(history, tid) {
     });
   });
   return pts;
+}
+
+function itemPointsFor(history, tid, name) {
+  const pts = [];
+  const key = String(name || "").trim().toLowerCase();
+  (history || []).forEach(entry => {
+    (entry.goals || []).forEach(hg => {
+      if (hg.tid !== tid) return;
+      (hg.items || []).forEach(it => {
+        if (String(it.name || "").trim().toLowerCase() === key) {
+          pts.push({ date: entry.date, correct: it.correct || 0, incorrect: it.incorrect || 0 });
+        }
+      });
+    });
+  });
+  return pts;
+}
+
+function goalAtCriteria(goal, history) {
+  if ((goal.items || []).length > 0) {
+    return goal.items.every(it =>
+      isAtCriteria({ ...goal, correct: it.correct || 0, incorrect: it.incorrect || 0 }, itemPointsFor(history, goal.tid, it.name))
+    );
+  }
+  return isAtCriteria(goal, pointsFor(history, goal.tid));
 }
 
 function pointPasses(p, type, target) {
@@ -173,6 +243,22 @@ function isAtCriteria(goal, pastPoints) {
       return t > 0 && Math.round((c / t) * 100) >= goal.target;
     }
     return c >= goal.target;
+  }
+  if (goal.ruleMode === "opps") {
+    const need = typeof goal.targetOf === "number" && goal.targetOf > 0 ? goal.targetOf : null;
+    if (!need) return false;
+    let c = 0, t = 0;
+    for (let i = points.length - 1; i >= 0; i--) {
+      c += points[i].correct;
+      t += points[i].correct + points[i].incorrect;
+      if (t >= need) break;
+    }
+    if (t < need) return false;
+    return c * need >= goal.target * t;
+  }
+  if (goal.ruleMode === "across") {
+    const n2 = goal.ruleN || 3;
+    return points.filter(p => pointPasses(p, goal.type, goal.target)).length >= n2;
   }
   const n = goal.ruleN || 3;
   if (points.length < n) return false;
@@ -265,6 +351,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
   const [confirm, setConfirm] = useState(null);
   const [timerOpen, setTimerOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [itemPrompt, setItemPrompt] = useState(false);
 
   const tick = useCallback(() => {
     onUpdate(goal.id, (prev) => {
@@ -290,21 +377,29 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
     return () => clearInterval(intervalRef.current);
   }, [goal.timerRunning, tick]);
 
-  const correct = goal.correct ?? 0;
-  const incorrect = goal.incorrect ?? 0;
+  const hasItems = (goal.items || []).length > 0;
+  const ai = hasItems ? Math.min(goal.activeItem || 0, goal.items.length - 1) : 0;
+  const cur = hasItems ? goal.items[ai] : goal;
+  const correct = cur.correct ?? 0;
+  const incorrect = cur.incorrect ?? 0;
   const total = goal.type === "percent" ? correct + incorrect : correct;
   const pct = total > 0 && goal.type === "percent" ? Math.round((correct / total) * 100) : null;
 
   const update = (fields) => onUpdate(goal.id, (prev) => ({ ...prev, ...fields }));
+  const setItem = (idx, fields) => onUpdate(goal.id, (prev) => ({
+    ...prev,
+    items: (prev.items || []).map((it, i) => (i === idx ? { ...it, ...fields } : it)),
+  }));
+  const bump = (fields) => (hasItems ? setItem(ai, fields) : update(fields));
 
-  const handlePlus = () => update({ correct: correct + 1 });
-  const handleMinus = () => update({ incorrect: incorrect + 1 });
+  const handlePlus = () => bump({ correct: correct + 1 });
+  const handleMinus = () => bump({ incorrect: incorrect + 1 });
   const handleUndo = () => {
     if (goal.type === "percent") {
-      if (incorrect > 0) update({ incorrect: incorrect - 1 });
-      else if (correct > 0) update({ correct: correct - 1 });
+      if (incorrect > 0) bump({ incorrect: incorrect - 1 });
+      else if (correct > 0) bump({ correct: correct - 1 });
     } else {
-      if (correct > 0) update({ correct: correct - 1 });
+      if (correct > 0) bump({ correct: correct - 1 });
     }
   };
 
@@ -317,7 +412,10 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
   };
 
   const doConfirm = (type) => {
-    if (type === "tally") update({ correct: 0, incorrect: 0 });
+    if (type === "tally") {
+      if (hasItems) onUpdate(goal.id, (prev) => ({ ...prev, items: (prev.items || []).map(it => ({ ...it, correct: 0, incorrect: 0 })) }));
+      else update({ correct: 0, incorrect: 0 });
+    }
     if (type === "timer") update({ timerRemaining: goal.timerDuration, timerRunning: false, timerAlert: false });
     setConfirm(null);
   };
@@ -415,11 +513,49 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
           ))}
         </div>
 
+        {itemPrompt && (
+          <PromptModal
+            title="Add item"
+            placeholder="Item name (e.g., cup)..."
+            onSubmit={(name) => {
+              onUpdate(goal.id, (prev) => ({
+                ...prev,
+                items: [...(prev.items || []), { name, correct: 0, incorrect: 0 }],
+                activeItem: (prev.items || []).length,
+              }));
+              setItemPrompt(false);
+            }}
+            onCancel={() => setItemPrompt(false)}
+          />
+        )}
+        {hasItems && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 10 }}>
+            {goal.items.map((it, i) => {
+              const t2 = (it.correct || 0) + (it.incorrect || 0);
+              const lbl = goal.type === "percent" ? `${it.correct || 0}/${t2}` : `${it.correct || 0}x`;
+              return (
+                <button key={i} onClick={() => update({ activeItem: i })} style={{
+                  padding: "6px 12px", borderRadius: 999,
+                  border: `2px solid ${i === ai ? "#4f46e5" : "#e2e8f0"}`,
+                  background: i === ai ? "#ede9fe" : "#fff",
+                  color: i === ai ? "#3c3489" : "#64748b",
+                  fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+                }}>{it.name} · {lbl}</button>
+              );
+            })}
+            <button onClick={() => setItemPrompt(true)} style={{
+              padding: "6px 10px", borderRadius: 999, border: "1.5px dashed #c7d2fe",
+              background: "#eef2ff", color: "#4f46e5", fontSize: 13, fontWeight: 600,
+              cursor: "pointer", fontFamily: "inherit",
+            }}>+ item</button>
+          </div>
+        )}
         <div style={{
           background: "#f1f5f9", borderRadius: 10, padding: "10px 14px",
           marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between",
         }}>
           <div style={{ fontFamily: "monospace", fontSize: 22, fontWeight: 700, color: "#1e293b" }}>
+            {hasItems && <span style={{ fontSize: 12, color: "#4f46e5", display: "block", fontFamily: "inherit" }}>{cur.name}</span>}
             {goal.type === "percent" ? `${correct}/${total}` : `${correct}x`}
           </div>
           {goal.type === "percent" && (
@@ -554,7 +690,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
             </span>
             {typeof goal.target === "number" && !detailsOpen && (
               <span style={{ fontSize: 11, color: "#4f46e5", fontWeight: 700 }}>
-                {goal.target}{goal.type === "percent" ? "%" : "x"} · {goal.ruleMode === "total" ? "month total" : `${goal.ruleN} in a row`}
+                {goal.ruleMode === "opps" ? `${goal.target}/${goal.targetOf ?? "?"} opps` : `${goal.target}${goal.type === "percent" ? "%" : "x"} · ${goal.ruleMode === "total" ? "month total" : goal.ruleMode === "across" ? `${goal.ruleN} sessions` : `${goal.ruleN} in a row`}`}
               </span>
             )}
             <span style={{ fontSize: 12, marginLeft: "auto", color: "#cbd5e1" }}>{detailsOpen ? "▲" : "▼"}</span>
@@ -573,6 +709,16 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
                   marginBottom: 8,
                 }}
               />
+              <button onClick={() => {
+                const p = parseGoalText(goal.fullGoal);
+                if (Object.keys(p).length === 0) return;
+                if (p.timerDuration) p.timerRemaining = p.timerDuration;
+                update(p);
+              }} style={{
+                width: "100%", marginBottom: 8, padding: "8px", borderRadius: 8,
+                border: "1.5px solid #c7d2fe", background: "#eef2ff", color: "#4f46e5",
+                fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+              }}>✨ Auto-set tracking from goal text</button>
               <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>Target</span>
                 <input
@@ -581,19 +727,29 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
                   onChange={e => update({ target: e.target.value === "" ? null : Number(e.target.value) })}
                   placeholder="—"
                   style={{
-                    width: 56, borderRadius: 7, border: "1.5px solid #e2e8f0", padding: "5px 8px",
+                    width: 52, borderRadius: 7, border: "1.5px solid #e2e8f0", padding: "5px 8px",
                     fontSize: 13, fontFamily: "inherit", outline: "none", color: "#1e293b",
                   }}
                 />
-                <span style={{ fontSize: 12, color: "#94a3b8" }}>{goal.type === "percent" ? "%" : "x"}</span>
-                <button onClick={() => update({ ruleMode: "row" })} style={{
-                  padding: "5px 9px", borderRadius: 7,
-                  border: `1.5px solid ${goal.ruleMode !== "total" ? "#4f46e5" : "#e2e8f0"}`,
-                  background: goal.ruleMode !== "total" ? "#ede9fe" : "#fff",
-                  color: goal.ruleMode !== "total" ? "#4f46e5" : "#64748b",
-                  fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
-                }}>in a row</button>
-                {goal.ruleMode !== "total" && (
+                {goal.ruleMode === "opps" ? (
+                  <>
+                    <span style={{ fontSize: 12, color: "#94a3b8" }}>of last</span>
+                    <input
+                      type="number"
+                      value={goal.targetOf ?? ""}
+                      onChange={e => update({ targetOf: e.target.value === "" ? null : Number(e.target.value) })}
+                      placeholder="—"
+                      style={{
+                        width: 52, borderRadius: 7, border: "1.5px solid #e2e8f0", padding: "5px 8px",
+                        fontSize: 13, fontFamily: "inherit", outline: "none", color: "#1e293b",
+                      }}
+                    />
+                    <span style={{ fontSize: 12, color: "#94a3b8" }}>opps</span>
+                  </>
+                ) : (
+                  <span style={{ fontSize: 12, color: "#94a3b8" }}>{goal.type === "percent" ? "%" : "x"}</span>
+                )}
+                {(goal.ruleMode === "row" || goal.ruleMode === "across") && (
                   <input
                     type="number"
                     value={goal.ruleN}
@@ -604,13 +760,31 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
                     }}
                   />
                 )}
-                <button onClick={() => update({ ruleMode: "total" })} style={{
-                  padding: "5px 9px", borderRadius: 7,
-                  border: `1.5px solid ${goal.ruleMode === "total" ? "#4f46e5" : "#e2e8f0"}`,
-                  background: goal.ruleMode === "total" ? "#ede9fe" : "#fff",
-                  color: goal.ruleMode === "total" ? "#4f46e5" : "#64748b",
-                  fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
-                }}>month total</button>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", marginTop: 6 }}>
+                {[["row", "in a row"], ["across", "sessions (any)"], ["opps", "of last opps"], ["total", "month total"]].map(([m, lbl]) => (
+                  <button key={m} onClick={() => update({ ruleMode: m })} style={{
+                    padding: "5px 9px", borderRadius: 7,
+                    border: `1.5px solid ${goal.ruleMode === m ? "#4f46e5" : "#e2e8f0"}`,
+                    background: goal.ruleMode === m ? "#ede9fe" : "#fff",
+                    color: goal.ruleMode === m ? "#4f46e5" : "#64748b",
+                    fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+                  }}>{lbl}</button>
+                ))}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>Items</span>
+                {(goal.items || []).map((it, i) => (
+                  <span key={i} style={{ fontSize: 12, color: "#475569", border: "1.5px solid #e2e8f0", borderRadius: 999, padding: "3px 8px", background: "#fff" }}>
+                    {it.name}
+                    <button onClick={() => onUpdate(goal.id, (prev) => ({ ...prev, items: (prev.items || []).filter((x, xi) => xi !== i), activeItem: 0 }))} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: 12, padding: "0 0 0 4px" }}>✕</button>
+                  </span>
+                ))}
+                <button onClick={() => setItemPrompt(true)} style={{
+                  padding: "3px 10px", borderRadius: 999, border: "1.5px dashed #c7d2fe",
+                  background: "#eef2ff", color: "#4f46e5", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+                }}>+ item</button>
+                <span style={{ fontSize: 11, color: "#94a3b8" }}>(optional — for multi-item goals)</span>
               </div>
               {history && history.length > 0 && (
                 <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 8, fontFamily: "monospace" }}>
@@ -656,6 +830,12 @@ function SummaryLine({ goal, index }) {
     dataStr = `${correct}/${total} — ${pct ?? "—"}% accuracy`;
   } else {
     dataStr = timerLabel ? `${total}x / ${timerLabel}` : `${total}x`;
+  }
+  if ((goal.items || []).length > 0) {
+    dataStr = goal.items.map(it => {
+      const t2 = (it.correct || 0) + (it.incorrect || 0);
+      return goal.type === "percent" ? `${it.name} ${it.correct || 0}/${t2}` : `${it.name} ${it.correct || 0}x`;
+    }).join(", ");
   }
 
   return (
@@ -712,7 +892,7 @@ function StudentBar({ roster, selectedId, onSelect, onAdd, onManage, onHistory }
   );
 }
 
-function RosterPanel({ roster, onRename, onDelete, onShare, onImport, onClose, shareStatus }) {
+function RosterPanel({ roster, onRename, onDelete, onMove, onShare, onImport, onClose, shareStatus }) {
   const [importText, setImportText] = useState("");
   const [importMsg, setImportMsg] = useState(null);
   const [renaming, setRenaming] = useState(null);
@@ -768,6 +948,14 @@ function RosterPanel({ roster, onRename, onDelete, onShare, onImport, onClose, s
         }}>
           <span style={{ fontSize: 14, fontWeight: 600, color: "#1e293b", flex: 1 }}>{s.name}</span>
           <span style={{ fontSize: 11, color: "#94a3b8" }}>{(s.goals || []).length} goal{(s.goals || []).length === 1 ? "" : "s"}</span>
+          <button onClick={() => onMove(s.id, -1)} style={{
+            padding: "4px 8px", borderRadius: 7, border: "1.5px solid #e2e8f0",
+            background: "#f8fafc", color: "#64748b", fontSize: 12, fontWeight: 700, cursor: "pointer",
+          }}>▲</button>
+          <button onClick={() => onMove(s.id, 1)} style={{
+            padding: "4px 8px", borderRadius: 7, border: "1.5px solid #e2e8f0",
+            background: "#f8fafc", color: "#64748b", fontSize: 12, fontWeight: 700, cursor: "pointer",
+          }}>▼</button>
           <button onClick={() => setRenaming(s)} style={{
             padding: "4px 10px", borderRadius: 7, border: "1.5px solid #e2e8f0",
             background: "#f8fafc", color: "#64748b", fontSize: 12, fontWeight: 700,
@@ -973,6 +1161,17 @@ function App() {
     });
   };
 
+  const moveStudent = (id, dir) => {
+    setStore(prev => {
+      const i = prev.roster.findIndex(s => s.id === id);
+      const j = i + dir;
+      if (i < 0 || j < 0 || j >= prev.roster.length) return prev;
+      const roster = [...prev.roster];
+      [roster[i], roster[j]] = [roster[j], roster[i]];
+      return { ...prev, roster };
+    });
+  };
+
   const openHistory = () => {
     if (!selectedStudent) return;
     const payload = {
@@ -1091,6 +1290,12 @@ function App() {
       let dataStr = g.type === "percent"
         ? `${correct}/${total} — ${pct ?? "—"}% accuracy`
         : timerLabel ? `${total}x / ${timerLabel}` : `${total}x`;
+      if ((g.items || []).length > 0) {
+        dataStr = g.items.map(it => {
+          const t2 = (it.correct || 0) + (it.incorrect || 0);
+          return g.type === "percent" ? `${it.name} ${it.correct || 0}/${t2}` : `${it.name} ${it.correct || 0}x`;
+        }).join(", ");
+      }
       let line = `${label} — ${dataStr}`;
       if (g.notes.trim()) line += `; ${g.notes.trim()}`;
       html += `<p>${line}</p>`;
@@ -1117,6 +1322,12 @@ function App() {
       let dataStr = g.type === "percent"
         ? `${correct}/${total} — ${pct ?? "—"}% accuracy`
         : timerLabel ? `${total}x / ${timerLabel}` : `${total}x`;
+      if ((g.items || []).length > 0) {
+        dataStr = g.items.map(it => {
+          const t2 = (it.correct || 0) + (it.incorrect || 0);
+          return g.type === "percent" ? `${it.name} ${it.correct || 0}/${t2}` : `${it.name} ${it.correct || 0}x`;
+        }).join(", ");
+      }
       let line = `${label} — ${dataStr}`;
       if (g.notes.trim()) line += `; ${g.notes.trim()}`;
       lines.push(line);
@@ -1159,8 +1370,21 @@ function App() {
       let roster = prev.roster;
       if (prev.selectedId !== "quick") {
         const logged = cur.goals
-          .filter(g => !g.skipped && (g.correct || 0) + (g.incorrect || 0) > 0)
-          .map(g => ({ tid: g.tid, label: g.label, type: g.type, correct: g.correct || 0, incorrect: g.incorrect || 0 }));
+          .filter(g => !g.skipped && ((g.items || []).length > 0
+            ? g.items.some(it => (it.correct || 0) + (it.incorrect || 0) > 0)
+            : (g.correct || 0) + (g.incorrect || 0) > 0))
+          .map(g => {
+            const base = { tid: g.tid, label: g.label, type: g.type, correct: g.correct || 0, incorrect: g.incorrect || 0 };
+            if ((g.items || []).length > 0) {
+              const its = g.items
+                .filter(it => (it.correct || 0) + (it.incorrect || 0) > 0)
+                .map(it => ({ name: it.name, correct: it.correct || 0, incorrect: it.incorrect || 0 }));
+              base.items = its;
+              base.correct = its.reduce((s, it) => s + it.correct, 0);
+              base.incorrect = its.reduce((s, it) => s + it.incorrect, 0);
+            }
+            return base;
+          });
         roster = prev.roster.map(s => {
           if (s.id !== prev.selectedId) return s;
           const history = logged.length > 0
@@ -1219,6 +1443,7 @@ function App() {
           roster={roster}
           onRename={renameStudent}
           onDelete={deleteStudent}
+          onMove={moveStudent}
           onShare={shareRoster}
           onImport={importRoster}
           onClose={() => setShowRoster(false)}
@@ -1228,7 +1453,7 @@ function App() {
 
       <div style={{ padding: "12px 16px 0" }}>
         {goals.filter(g => !g.skipped).map((g, i) => (
-          <GoalCard key={g.id} goal={g} index={i} onUpdate={updateGoal} onRemove={removeGoal} onSkip={skipGoal} canSkip={selectedId !== "quick"} history={pointsFor(studentHistory, g.tid)} atCriteria={isAtCriteria(g, pointsFor(studentHistory, g.tid))} />
+          <GoalCard key={g.id} goal={g} index={i} onUpdate={updateGoal} onRemove={removeGoal} onSkip={skipGoal} canSkip={selectedId !== "quick"} history={pointsFor(studentHistory, g.tid)} atCriteria={goalAtCriteria(g, studentHistory)} />
         ))}
         {goals.some(g => g.skipped) && (
           <div style={{
@@ -1281,9 +1506,9 @@ function App() {
             Session Summary{selectedStudent ? ` — ${selectedStudent.name}` : ""}
           </div>
           {goals.filter(g => !g.skipped).map((g, i) => <SummaryLine key={g.id} goal={g} index={i} />)}
-          {goals.some(g => !g.skipped && isAtCriteria(g, pointsFor(studentHistory, g.tid))) && (
+          {goals.some(g => !g.skipped && goalAtCriteria(g, studentHistory)) && (
             <div style={{ background: "#312e81", borderRadius: 9, padding: "8px 10px", fontSize: 12, color: "#c7d2fe", marginBottom: 8 }}>
-              🎯 At criteria — review: {goals.filter(g => !g.skipped && isAtCriteria(g, pointsFor(studentHistory, g.tid))).map((g, i) => g.label || `Goal ${i + 1}`).join("; ")} <span style={{ opacity: 0.7 }}>(screen only — not copied)</span>
+              🎯 At criteria — review: {goals.filter(g => !g.skipped && goalAtCriteria(g, studentHistory)).map((g, i) => g.label || `Goal ${i + 1}`).join("; ")} <span style={{ opacity: 0.7 }}>(screen only — not copied)</span>
             </div>
           )}
           {reinforcers.trim() && (

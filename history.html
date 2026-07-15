@@ -86,7 +86,7 @@
         addGoal(hg.tid, hg.label, hg.type);
         // keep latest label from history if template missing
         if (byTid[hg.tid] && !byTid[hg.tid].label && hg.label) byTid[hg.tid].label = hg.label;
-        byTid[hg.tid].points.push({ date: entry.date, correct: hg.correct || 0, incorrect: hg.incorrect || 0 });
+        byTid[hg.tid].points.push({ date: entry.date, correct: hg.correct || 0, incorrect: hg.incorrect || 0, items: hg.items });
       });
     });
     var tplByTid = {};
@@ -132,8 +132,14 @@
         var pct = isPct && total > 0 ? Math.round((p.correct / total) * 100) : null;
         var met = target !== null && (isPct ? (pct !== null && pct >= target) : p.correct >= target);
         mc += p.correct; mt += total;
-        html += "<tr><td>" + fmtDate(p.date) + "</td><td>" +
-          (isPct ? p.correct + "/" + total : p.correct + "x") + "</td><td>" +
+        var scoreTxt = isPct ? p.correct + "/" + total : p.correct + "x";
+        if (p.items && p.items.length) {
+          scoreTxt += " (" + p.items.map(function (it) {
+            var t2 = (it.correct || 0) + (it.incorrect || 0);
+            return esc(it.name) + " " + (isPct ? (it.correct || 0) + "/" + t2 : (it.correct || 0) + "x");
+          }).join(", ") + ")";
+        }
+        html += "<tr><td>" + fmtDate(p.date) + "</td><td>" + scoreTxt + "</td><td>" +
           (isPct ? (pct === null ? "—" : pct + "%") : p.correct) + "</td><td" + (met ? ' class="met">✓' : ">") + "</td></tr>";
       });
       monthRow();
