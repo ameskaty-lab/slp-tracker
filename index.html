@@ -637,7 +637,7 @@ function SummaryLine({ goal, index }) {
   );
 }
 
-function StudentBar({ roster, selectedId, onSelect, onAdd, onManage }) {
+function StudentBar({ roster, selectedId, onSelect, onAdd, onManage, onHistory }) {
   const pill = (active) => ({
     padding: "7px 14px", borderRadius: 999, border: "2px solid",
     borderColor: active ? "#4f46e5" : "#e2e8f0",
@@ -663,6 +663,13 @@ function StudentBar({ roster, selectedId, onSelect, onAdd, onManage }) {
           cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0,
         }}>+ Student</button>
       </div>
+      {selectedId !== "quick" && (
+        <button onClick={onHistory} title="Session history" style={{
+          padding: "7px 10px", borderRadius: 10, border: "2px solid #e2e8f0",
+          background: "#fff", color: "#64748b", fontSize: 14, cursor: "pointer", flexShrink: 0,
+          marginBottom: 4,
+        }}>🕘</button>
+      )}
       <button onClick={onManage} title="Manage roster" style={{
         padding: "7px 10px", borderRadius: 10, border: "2px solid #e2e8f0",
         background: "#fff", color: "#64748b", fontSize: 14, cursor: "pointer", flexShrink: 0,
@@ -747,7 +754,7 @@ function RosterPanel({ roster, onRename, onDelete, onShare, onImport, onClose, s
           color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit",
         }}>{shareStatus || "Share Roster (AirDrop / Messages / Copy)"}</button>
         <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4, textAlign: "center" }}>
-          Sends a roster code to your other device.
+          Sends students, goals & session history to your other device.
         </div>
       </div>
 
@@ -771,7 +778,7 @@ function RosterPanel({ roster, onRename, onDelete, onShare, onImport, onClose, s
           border: "1.5px solid #c7d2fe", background: importText.trim() ? "#eef2ff" : "#f8fafc",
           color: importText.trim() ? "#4f46e5" : "#cbd5e1",
           fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit",
-        }}>Import (adds students)</button>
+        }}>Import (add & merge)</button>
         {importMsg && (
           <div style={{
             fontSize: 12, fontWeight: 600, marginTop: 6, textAlign: "center",
@@ -931,10 +938,23 @@ function App() {
     });
   };
 
+  const openHistory = () => {
+    if (!selectedStudent) return;
+    const payload = {
+      name: selectedStudent.name,
+      goals: selectedStudent.goals || [],
+      history: selectedStudent.history || [],
+    };
+    const data = encodeURIComponent(btoa(unescape(encodeURIComponent(JSON.stringify(payload)))));
+    const url = `history.html#${data}`;
+    const w = window.open(url, "_blank");
+    if (!w) window.location.href = url;
+  };
+
   const shareRoster = async () => {
     const payload = JSON.stringify({
       slpRoster: 1,
-      students: roster.map(s => ({ name: s.name, goals: s.goals || [] })),
+      students: roster.map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [] })),
     });
     if (navigator.share) {
       try {
@@ -960,31 +980,61 @@ function App() {
       if (start === -1 || end === -1) throw new Error();
       const parsed = JSON.parse(text.slice(start, end + 1));
       if (parsed.slpRoster !== 1 || !Array.isArray(parsed.students)) throw new Error();
-      const existingNames = new Set(roster.map(s => s.name.trim().toLowerCase()));
-      const toAdd = parsed.students
-        .filter(s => s && typeof s.name === "string" && s.name.trim())
-        .filter(s => !existingNames.has(s.name.trim().toLowerCase()))
-        .map(s => ({
-          id: makeId("student"),
-          name: s.name.trim(),
-          goals: Array.isArray(s.goals)
-            ? s.goals.map(t => ({
-                tid: makeId("t"),
-                label: typeof t.label === "string" ? t.label : "",
-                type: t.type === "tally" ? "tally" : "percent",
-                timerDuration: typeof t.timerDuration === "number" ? t.timerDuration : null,
-                fullGoal: typeof t.fullGoal === "string" ? t.fullGoal : "",
-                target: typeof t.target === "number" ? t.target : null,
-                ruleMode: t.ruleMode === "total" ? "total" : "row",
-                ruleN: typeof t.ruleN === "number" ? t.ruleN : 3,
-              }))
-            : [],
-        }));
-      if (toAdd.length === 0) {
-        return { ok: false, text: "No new students found (already on your roster?)" };
+      const cleanGoal = (t) => normalizeGoalFields({
+        tid: typeof t.tid === "string" ? t.tid : null,
+        label: typeof t.label === "string" ? t.label : "",
+        type: t.type === "tally" ? "tally" : "percent",
+        timerDuration: typeof t.timerDuration === "number" ? t.timerDuration : null,
+        fullGoal: t.fullGoal,
+        target: t.target,
+        ruleMode: t.ruleMode,
+        ruleN: t.ruleN,
+      });
+      const incoming = parsed.students.filter(s => s && typeof s.name === "string" && s.name.trim());
+      let added = 0, merged = 0, newSessions = 0;
+      const newRoster = [...roster];
+      incoming.forEach(s => {
+        const inGoals = (Array.isArray(s.goals) ? s.goals : []).map(cleanGoal);
+        const inHist = (Array.isArray(s.history) ? s.history : []).filter(h => h && typeof h.date === "string");
+        const idx = newRoster.findIndex(r => r.name.trim().toLowerCase() === s.name.trim().toLowerCase());
+        if (idx === -1) {
+          newRoster.push({ id: makeId("student"), name: s.name.trim(), goals: inGoals, history: inHist.slice(-40) });
+          added++;
+          newSessions += inHist.length;
+          return;
+        }
+        const local = newRoster[idx];
+        const localGoals = [...(local.goals || [])];
+        const beforeLen = localGoals.length;
+        const tidMap = {};
+        inGoals.forEach(ig => {
+          let match = localGoals.find(lg => lg.tid === ig.tid);
+          if (!match && ig.label.trim()) {
+            match = localGoals.find(lg => (lg.label || "").trim().toLowerCase() === ig.label.trim().toLowerCase());
+          }
+          if (match) {
+            tidMap[ig.tid] = match.tid;
+          } else {
+            localGoals.push(ig);
+            tidMap[ig.tid] = ig.tid;
+          }
+        });
+        const have = new Set((local.history || []).map(h => h.date));
+        const extra = inHist
+          .filter(h => !have.has(h.date))
+          .map(h => ({ ...h, goals: (h.goals || []).map(hg => ({ ...hg, tid: tidMap[hg.tid] || hg.tid })) }));
+        const history = [...(local.history || []), ...extra]
+          .sort((a, b) => new Date(a.date) - new Date(b.date))
+          .slice(-40);
+        newRoster[idx] = { ...local, goals: localGoals, history };
+        if (extra.length > 0 || localGoals.length > beforeLen) merged++;
+        newSessions += extra.length;
+      });
+      if (added === 0 && merged === 0) {
+        return { ok: false, text: "Nothing new in that code (already in sync?)" };
       }
-      setStore(prev => ({ ...prev, roster: [...prev.roster, ...toAdd] }));
-      return { ok: true, text: `✓ Added ${toAdd.length} student${toAdd.length === 1 ? "" : "s"}` };
+      setStore(prev => ({ ...prev, roster: newRoster }));
+      return { ok: true, text: `✓ ${added} added, ${merged} merged, ${newSessions} session${newSessions === 1 ? "" : "s"} synced` };
     } catch {
       return { ok: false, text: "That doesn't look like a roster code — paste the whole thing" };
     }
@@ -1126,6 +1176,7 @@ function App() {
         onSelect={selectStudent}
         onAdd={() => setAddingStudent(true)}
         onManage={() => setShowRoster(v => !v)}
+        onHistory={openHistory}
       />
 
       {showRoster && (

@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Session History</title>
+<meta name="theme-color" content="#4f46e5" />
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, 'DM Sans', 'Nunito', system-ui, sans-serif; background: #f8fafc; color: #1e293b; }
+  .wrap { max-width: 520px; margin: 0 auto; padding-bottom: 40px; }
+  .header { background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); color: #fff; padding: 18px 20px 14px; display: flex; align-items: center; gap: 12px; }
+  .header .kicker { font-size: 11px; font-weight: 700; letter-spacing: 2px; opacity: 0.75; text-transform: uppercase; }
+  .header .name { font-size: 21px; font-weight: 800; letter-spacing: -0.5px; }
+  .backbtn { margin-left: auto; background: rgba(255,255,255,0.18); border: none; color: #fff; font-weight: 700; font-size: 13px; padding: 8px 14px; border-radius: 9px; cursor: pointer; font-family: inherit; }
+  .goal { background: #fff; border: 2px solid #e2e8f0; border-radius: 14px; margin: 14px 14px 0; padding: 14px; }
+  .goal h2 { margin: 0 0 2px; font-size: 15px; }
+  .fullgoal { font-size: 12px; color: #64748b; margin: 2px 0 6px; }
+  .chip { display: inline-block; font-size: 11px; font-weight: 700; color: #4f46e5; background: #ede9fe; border-radius: 999px; padding: 2px 9px; margin-bottom: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: #94a3b8; padding: 4px 6px; border-bottom: 1.5px solid #e2e8f0; }
+  td { padding: 6px; border-bottom: 1px solid #f1f5f9; font-family: ui-monospace, Menlo, monospace; }
+  td.met { color: #16a34a; font-weight: 700; }
+  .month { background: #f1f5f9; font-weight: 700; }
+  .month td { font-family: inherit; font-size: 12px; color: #475569; }
+  .empty { text-align: center; color: #94a3b8; padding: 60px 30px; font-size: 14px; line-height: 1.6; }
+  .note { font-size: 11px; color: #94a3b8; text-align: center; margin: 16px 20px 0; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <div>
+      <div class="kicker">Session History</div>
+      <div class="name" id="student">—</div>
+    </div>
+    <button class="backbtn" onclick="goBack()">✕ Close</button>
+  </div>
+  <div id="content"></div>
+</div>
+<script>
+  function goBack() {
+    // Try to close (works when opened as a new tab); otherwise go back.
+    window.close();
+    setTimeout(function () { if (window.history.length > 1) history.back(); }, 150);
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function fmtDate(iso) {
+    var d = new Date(iso);
+    return isNaN(d) ? "?" : d.toLocaleDateString("en-US", { month: "numeric", day: "numeric" });
+  }
+
+  function monthKey(iso) {
+    var d = new Date(iso);
+    return isNaN(d) ? "?" : d.getFullYear() + "-" + d.getMonth();
+  }
+
+  function monthName(iso) {
+    var d = new Date(iso);
+    return isNaN(d) ? "?" : d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  }
+
+  function render(data) {
+    document.getElementById("student").textContent = data.name || "Student";
+    var content = document.getElementById("content");
+    var history = Array.isArray(data.history) ? data.history : [];
+    var templates = Array.isArray(data.goals) ? data.goals : [];
+
+    // Ordered goal list: templates first, then any goals only found in history
+    var order = [];
+    var byTid = {};
+    function addGoal(tid, label, type) {
+      if (!tid || byTid[tid]) return;
+      byTid[tid] = { tid: tid, label: label || "", type: type || "percent", points: [] };
+      order.push(tid);
+    }
+    templates.forEach(function (t) { addGoal(t.tid, t.label, t.type); });
+    history.forEach(function (entry) {
+      (entry.goals || []).forEach(function (hg) {
+        addGoal(hg.tid, hg.label, hg.type);
+        // keep latest label from history if template missing
+        if (byTid[hg.tid] && !byTid[hg.tid].label && hg.label) byTid[hg.tid].label = hg.label;
+        byTid[hg.tid].points.push({ date: entry.date, correct: hg.correct || 0, incorrect: hg.incorrect || 0 });
+      });
+    });
+    var tplByTid = {};
+    templates.forEach(function (t) { tplByTid[t.tid] = t; });
+
+    if (history.length === 0) {
+      content.innerHTML = '<div class="empty">No sessions logged yet.<br/>Sessions are saved each time you tap <b>New Session</b> in the tracker with data on the board.</div>';
+      return;
+    }
+
+    var html = "";
+    order.forEach(function (tid, gi) {
+      var g = byTid[tid];
+      if (g.points.length === 0 && !tplByTid[tid]) return;
+      var tpl = tplByTid[tid] || {};
+      var target = typeof tpl.target === "number" ? tpl.target : null;
+      var isPct = g.type !== "tally";
+      html += '<div class="goal"><h2>' + esc(g.label || ("Goal " + (gi + 1))) + "</h2>";
+      if (tpl.fullGoal) html += '<div class="fullgoal">' + esc(tpl.fullGoal) + "</div>";
+      if (target !== null) {
+        html += '<div class="chip">Target ' + target + (isPct ? "%" : "x") +
+          " · " + (tpl.ruleMode === "total" ? "month total" : (tpl.ruleN || 3) + " in a row") + "</div>";
+      }
+      if (g.points.length === 0) {
+        html += '<div class="fullgoal">No sessions logged for this goal yet.</div></div>';
+        return;
+      }
+      html += "<table><tr><th>Date</th><th>Score</th><th>" + (isPct ? "%" : "Count") + "</th><th>Met</th></tr>";
+      var curMonth = null, mc = 0, mt = 0;
+      function monthRow() {
+        if (curMonth === null) return;
+        var summary;
+        if (isPct) summary = mc + "/" + mt + (mt > 0 ? " — " + Math.round((mc / mt) * 100) + "%" : "");
+        else summary = mc + "x total";
+        html += '<tr class="month"><td colspan="4">' + esc(curMonth) + " total: " + summary + "</td></tr>";
+      }
+      g.points.forEach(function (p) {
+        var mk = monthKey(p.date);
+        if (curMonth !== null && mk !== curMonthKey) { monthRow(); mc = 0; mt = 0; }
+        var curMonthName = monthName(p.date);
+        curMonth = curMonthName; curMonthKey = mk;
+        var total = p.correct + p.incorrect;
+        var pct = isPct && total > 0 ? Math.round((p.correct / total) * 100) : null;
+        var met = target !== null && (isPct ? (pct !== null && pct >= target) : p.correct >= target);
+        mc += p.correct; mt += total;
+        html += "<tr><td>" + fmtDate(p.date) + "</td><td>" +
+          (isPct ? p.correct + "/" + total : p.correct + "x") + "</td><td>" +
+          (isPct ? (pct === null ? "—" : pct + "%") : p.correct) + "</td><td" + (met ? ' class="met">✓' : ">") + "</td></tr>";
+      });
+      monthRow();
+      html += "</table></div>";
+    });
+    html += '<div class="note">Read-only snapshot from the tracker. Data lives on the device you opened this from.</div>';
+    content.innerHTML = html;
+  }
+
+  var curMonthKey = null;
+
+  try {
+    var hash = location.hash.slice(1);
+    if (!hash) {
+      document.getElementById("content").innerHTML =
+        '<div class="empty">Open this page using the 🕘 History button in the SLP Tracker app.</div>';
+    } else {
+      var json = decodeURIComponent(escape(atob(decodeURIComponent(hash))));
+      render(JSON.parse(json));
+    }
+  } catch (e) {
+    document.getElementById("content").innerHTML =
+      '<div class="empty">Could not read history data.<br/>Please reopen from the 🕘 History button in the tracker.</div>';
+  }
+</script>
+</body>
+</html>
