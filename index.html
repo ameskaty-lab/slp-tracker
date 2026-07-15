@@ -261,7 +261,7 @@ function PromptModal({ title, placeholder, initialValue, onSubmit, onCancel }) {
 function GoalCard({ goal, onUpdate, onRemove, index, history, atCriteria }) {
   const intervalRef = useRef(null);
   const [confirm, setConfirm] = useState(null);
-  const [timerOpen, setTimerOpen] = useState(true);
+  const [timerOpen, setTimerOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
 
   const tick = useCallback(() => {
@@ -875,7 +875,7 @@ function App() {
 
   const removeGoal = (id) => setSession(prev => ({ ...prev, goals: prev.goals.filter(g => g.id !== id) }));
   const addGoal = () => setSession(prev =>
-    prev.goals.length < 5 ? { ...prev, goals: [...prev.goals, newGoal()] } : prev
+    prev.goals.length < 10 ? { ...prev, goals: [...prev.goals, newGoal()] } : prev
   );
   const setReinforcers = (val) => setSession(prev => ({ ...prev, reinforcers: val }));
 
@@ -1011,7 +1011,7 @@ function App() {
       html += `<p>${line}</p>`;
     });
     if (reinforcers.trim()) {
-      html += `<p><em>Reinforcers/Activities: ${reinforcers.trim()}</em></p>`;
+      html += `<p><em>Reinforcers/Activities/Other: ${reinforcers.trim()}</em></p>`;
     }
     return html;
   };
@@ -1037,7 +1037,7 @@ function App() {
       lines.push(line);
       lines.push("");
     });
-    if (reinforcers.trim()) lines.push(`Reinforcers/Activities: ${reinforcers.trim()}`);
+    if (reinforcers.trim()) lines.push(`Reinforcers/Activities/Other: ${reinforcers.trim()}`);
     return lines.join("\n").trim();
   };
 
@@ -1144,18 +1144,18 @@ function App() {
         {goals.map((g, i) => (
           <GoalCard key={g.id} goal={g} index={i} onUpdate={updateGoal} onRemove={removeGoal} history={pointsFor(studentHistory, g.tid)} atCriteria={isAtCriteria(g, pointsFor(studentHistory, g.tid))} />
         ))}
-        {goals.length < 5 && (
+        {goals.length < 10 && (
           <button onClick={addGoal} style={{
             width: "100%", padding: "12px", borderRadius: 12,
             border: "2px dashed #c7d2fe", background: "#eef2ff",
             color: "#4f46e5", fontWeight: 700, fontSize: 14,
             cursor: "pointer", fontFamily: "inherit", marginBottom: 12,
-          }}>+ Add Goal ({goals.length}/5)</button>
+          }}>+ Add Goal ({goals.length}/10)</button>
         )}
 
         <div style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
-            Reinforcers / Activities
+            Reinforcers / Activities / Other
           </div>
           <textarea
             value={reinforcers}
@@ -1187,7 +1187,7 @@ function App() {
           )}
           {reinforcers.trim() && (
             <div style={{ borderTop: "1px solid #334155", paddingTop: 12, marginTop: 8, fontSize: 13, color: "#94a3b8" }}>
-              <span style={{ fontWeight: 700, color: "#cbd5e1" }}>Reinforcers/Activities:</span> {reinforcers.trim()}
+              <span style={{ fontWeight: 700, color: "#cbd5e1" }}>Reinforcers/Activities/Other:</span> {reinforcers.trim()}
             </div>
           )}
           <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
