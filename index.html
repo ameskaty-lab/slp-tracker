@@ -84,6 +84,7 @@ function newGoal() {
     correct: 0,
     incorrect: 0,
     notes: "",
+    skipped: false,
     fullGoal: "",
     target: null,
     ruleMode: "row",
@@ -127,6 +128,7 @@ function normalizeGoalFields(g) {
   return {
     ...g,
     tid: g.tid || makeId("t"),
+    skipped: !!g.skipped,
     fullGoal: g.fullGoal || "",
     target: typeof g.target === "number" ? g.target : null,
     ruleMode: g.ruleMode === "total" ? "total" : "row",
@@ -258,7 +260,7 @@ function PromptModal({ title, placeholder, initialValue, onSubmit, onCancel }) {
   );
 }
 
-function GoalCard({ goal, onUpdate, onRemove, index, history, atCriteria }) {
+function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, atCriteria }) {
   const intervalRef = useRef(null);
   const [confirm, setConfirm] = useState(null);
   const [timerOpen, setTimerOpen] = useState(false);
@@ -325,7 +327,38 @@ function GoalCard({ goal, onUpdate, onRemove, index, history, atCriteria }) {
 
   return (
     <>
-      {confirm && (
+      {confirm === "remove" && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
+          display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999,
+        }}>
+          <div style={{
+            background: "#fff", borderRadius: 16, padding: "24px 20px",
+            maxWidth: 300, width: "90%", textAlign: "center",
+            boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+          }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: "#1e293b", marginBottom: 16, lineHeight: 1.5 }}>
+              Remove "{goal.label || `Goal ${index + 1}`}"?
+            </div>
+            <button onClick={() => { onSkip(goal.id); setConfirm(null); }} style={{
+              width: "100%", padding: "11px", borderRadius: 9, border: "none",
+              background: "#4f46e5", color: "#fff", fontWeight: 700, fontSize: 14,
+              cursor: "pointer", fontFamily: "inherit", marginBottom: 8,
+            }}>Skip today — back next session</button>
+            <button onClick={() => { onRemove(goal.id); setConfirm(null); }} style={{
+              width: "100%", padding: "11px", borderRadius: 9, border: "none",
+              background: "#ef4444", color: "#fff", fontWeight: 700, fontSize: 14,
+              cursor: "pointer", fontFamily: "inherit", marginBottom: 8,
+            }}>Remove for good</button>
+            <button onClick={() => setConfirm(null)} style={{
+              width: "100%", padding: "10px", borderRadius: 9,
+              border: "1.5px solid #e2e8f0", background: "#f8fafc",
+              color: "#64748b", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit",
+            }}>Cancel</button>
+          </div>
+        </div>
+      )}
+      {(confirm === "tally" || confirm === "timer") && (
         <ConfirmModal
           message={confirm === "tally"
             ? "Reset all tally data for this goal? This cannot be undone."
@@ -362,7 +395,7 @@ function GoalCard({ goal, onUpdate, onRemove, index, history, atCriteria }) {
               fontWeight: 600, color: "#1e293b", background: "transparent", padding: "2px 4px",
             }}
           />
-          <button onClick={() => onRemove(goal.id)} style={{
+          <button onClick={() => (canSkip ? setConfirm("remove") : onRemove(goal.id))} style={{
             background: "none", border: "none", cursor: "pointer",
             color: "#cbd5e1", fontSize: 18, lineHeight: 1, padding: 2,
           }}>✕</button>
@@ -881,6 +914,8 @@ function App() {
   }, [setSession]);
 
   const removeGoal = (id) => setSession(prev => ({ ...prev, goals: prev.goals.filter(g => g.id !== id) }));
+  const skipGoal = (id) => updateGoal(id, { skipped: true });
+  const unskipGoal = (id) => updateGoal(id, { skipped: false });
   const addGoal = () => setSession(prev =>
     prev.goals.length < 10 ? { ...prev, goals: [...prev.goals, newGoal()] } : prev
   );
@@ -1046,7 +1081,7 @@ function App() {
       weekday: "long", month: "long", day: "numeric", year: "numeric"
     });
     let html = `<p><strong>${dateStr}</strong></p>`;
-    goals.forEach((g, i) => {
+    goals.filter(g => !g.skipped).forEach((g, i) => {
       const label = g.label || `Goal ${i + 1}`;
       const correct = g.correct ?? 0;
       const incorrect = g.incorrect ?? 0;
@@ -1072,7 +1107,7 @@ function App() {
       weekday: "long", month: "long", day: "numeric", year: "numeric"
     });
     let lines = [dateStr, ""];
-    goals.forEach((g, i) => {
+    goals.filter(g => !g.skipped).forEach((g, i) => {
       const label = g.label || `Goal ${i + 1}`;
       const correct = g.correct ?? 0;
       const incorrect = g.incorrect ?? 0;
@@ -1124,7 +1159,7 @@ function App() {
       let roster = prev.roster;
       if (prev.selectedId !== "quick") {
         const logged = cur.goals
-          .filter(g => (g.correct || 0) + (g.incorrect || 0) > 0)
+          .filter(g => !g.skipped && (g.correct || 0) + (g.incorrect || 0) > 0)
           .map(g => ({ tid: g.tid, label: g.label, type: g.type, correct: g.correct || 0, incorrect: g.incorrect || 0 }));
         roster = prev.roster.map(s => {
           if (s.id !== prev.selectedId) return s;
@@ -1192,9 +1227,24 @@ function App() {
       )}
 
       <div style={{ padding: "12px 16px 0" }}>
-        {goals.map((g, i) => (
-          <GoalCard key={g.id} goal={g} index={i} onUpdate={updateGoal} onRemove={removeGoal} history={pointsFor(studentHistory, g.tid)} atCriteria={isAtCriteria(g, pointsFor(studentHistory, g.tid))} />
+        {goals.filter(g => !g.skipped).map((g, i) => (
+          <GoalCard key={g.id} goal={g} index={i} onUpdate={updateGoal} onRemove={removeGoal} onSkip={skipGoal} canSkip={selectedId !== "quick"} history={pointsFor(studentHistory, g.tid)} atCriteria={isAtCriteria(g, pointsFor(studentHistory, g.tid))} />
         ))}
+        {goals.some(g => g.skipped) && (
+          <div style={{
+            background: "#f1f5f9", border: "1.5px dashed #cbd5e1", borderRadius: 12,
+            padding: "10px 12px", marginBottom: 12, fontSize: 12, color: "#64748b",
+          }}>
+            <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, fontSize: 10, color: "#94a3b8" }}>Skipped today — tap to restore </span>
+            {goals.filter(g => g.skipped).map(g => (
+              <button key={g.id} onClick={() => unskipGoal(g.id)} style={{
+                margin: "2px 4px", padding: "4px 10px", borderRadius: 999,
+                border: "1.5px solid #e2e8f0", background: "#fff", color: "#475569",
+                fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+              }}>{g.label || "Untitled goal"} ↩</button>
+            ))}
+          </div>
+        )}
         {goals.length < 10 && (
           <button onClick={addGoal} style={{
             width: "100%", padding: "12px", borderRadius: 12,
@@ -1230,10 +1280,10 @@ function App() {
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.5, color: "#94a3b8", textTransform: "uppercase", marginBottom: 12 }}>
             Session Summary{selectedStudent ? ` — ${selectedStudent.name}` : ""}
           </div>
-          {goals.map((g, i) => <SummaryLine key={g.id} goal={g} index={i} />)}
-          {goals.some(g => isAtCriteria(g, pointsFor(studentHistory, g.tid))) && (
+          {goals.filter(g => !g.skipped).map((g, i) => <SummaryLine key={g.id} goal={g} index={i} />)}
+          {goals.some(g => !g.skipped && isAtCriteria(g, pointsFor(studentHistory, g.tid))) && (
             <div style={{ background: "#312e81", borderRadius: 9, padding: "8px 10px", fontSize: 12, color: "#c7d2fe", marginBottom: 8 }}>
-              🎯 At criteria — review: {goals.filter(g => isAtCriteria(g, pointsFor(studentHistory, g.tid))).map((g, i) => g.label || `Goal ${i + 1}`).join("; ")} <span style={{ opacity: 0.7 }}>(screen only — not copied)</span>
+              🎯 At criteria — review: {goals.filter(g => !g.skipped && isAtCriteria(g, pointsFor(studentHistory, g.tid))).map((g, i) => g.label || `Goal ${i + 1}`).join("; ")} <span style={{ opacity: 0.7 }}>(screen only — not copied)</span>
             </div>
           )}
           {reinforcers.trim() && (
