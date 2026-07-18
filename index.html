@@ -38,6 +38,20 @@ const TIMER_OPTIONS = [
   { label: "30m", seconds: 1800 },
 ];
 
+const DURATION_OPTIONS = [
+  { label: "15s", seconds: 15 },
+  { label: "30s", seconds: 30 },
+  { label: "45s", seconds: 45 },
+  { label: "1m", seconds: 60 },
+  { label: "90s", seconds: 90 },
+  { label: "2m", seconds: 120 },
+  { label: "3m", seconds: 180 },
+  { label: "5m", seconds: 300 },
+  { label: "10m", seconds: 600 },
+];
+
+const SUPPORT_CODES = ["ind", "sp", "f", "p", "oh", "s", "r", "g", "m", "im", "k"];
+
 function formatTime(s) {
   const m = Math.floor(s / 60);
   const sec = s % 60;
@@ -72,11 +86,30 @@ function parseGoalText(text) {
     m = t.match(/across\s+(?:at least\s+)?(\d+)\s+(?:separate\s+|different\s+)?sessions/);
     if (m) { out.ruleMode = "across"; out.ruleN = Number(m[1]); }
   }
-  m = t.match(/(\d+)[\s-]*minutes?\b/);
+  m = t.match(/(\d+)[\s-]*minutes?\s+of\b/);
   if (m) {
-    const secs = Number(m[1]) * 60;
-    if (TIMER_OPTIONS.some(o => o.seconds === secs)) out.timerDuration = secs;
+    out.type = "duration";
+    out.target = Number(m[1]);
+    if (out.ruleMode === undefined) { out.ruleMode = "row"; out.ruleN = 3; }
+  } else {
+    m = t.match(/(\d+)[\s-]*minutes?\b/);
+    if (m) {
+      const secs = Number(m[1]) * 60;
+      if (TIMER_OPTIONS.some(o => o.seconds === secs)) out.timerDuration = secs;
+    }
   }
+  const sup = [
+    [/indirect model/, "im"],
+    [/direct model|verbal model|given (?:a |an )?model|initial model|\bmodels?\b/, "m"],
+    [/verbal prompt/, "r"],
+    [/gestural (?:prompt|cue)|gesture prompt/, "g"],
+    [/visual support|visual prompt|picture support/, "s"],
+    [/open hand/, "oh"],
+    [/physical prompt|physical support|physical prompting/, "p"],
+    [/phonemic/, "f"],
+    [/kinesthetic/, "k"],
+  ];
+  for (const [re2, code] of sup) { if (re2.test(t)) { out.support = code; break; } }
   if (out.type === undefined && out.timerDuration) {
     out.type = "tally"; out.target = 1;
     if (out.ruleMode === undefined) { out.ruleMode = "row"; out.ruleN = 3; }
@@ -117,8 +150,11 @@ function newGoal() {
     type: "percent",
     correct: 0,
     incorrect: 0,
+    durations: [],
     notes: "",
     skipped: false,
+    support: "ind",
+    usedSupport: "ind",
     items: [],
     activeItem: 0,
     fullGoal: "",
@@ -138,7 +174,7 @@ function goalFromTemplate(t) {
     ...newGoal(),
     tid: t.tid || makeId("t"),
     label: t.label || "",
-    type: t.type === "tally" ? "tally" : "percent",
+    type: ["tally", "duration"].includes(t.type) ? t.type : "percent",
     timerDuration: t.timerDuration ?? null,
     timerRemaining: t.timerDuration ?? null,
     fullGoal: t.fullGoal || "",
@@ -146,6 +182,8 @@ function goalFromTemplate(t) {
     targetOf: typeof t.targetOf === "number" ? t.targetOf : null,
     ruleMode: ["total", "opps", "across"].includes(t.ruleMode) ? t.ruleMode : "row",
     ruleN: typeof t.ruleN === "number" ? t.ruleN : 3,
+    support: typeof t.support === "string" && t.support ? t.support : "ind",
+    usedSupport: typeof t.support === "string" && t.support ? t.support : "ind",
     items: (t.items || []).map(it => ({ name: typeof it === "string" ? it : String((it && it.name) || ""), correct: 0, incorrect: 0 })),
     activeItem: 0,
   };
@@ -162,6 +200,7 @@ function templatesFromGoals(goals) {
     targetOf: typeof g.targetOf === "number" ? g.targetOf : null,
     ruleMode: ["total", "opps", "across"].includes(g.ruleMode) ? g.ruleMode : "row",
     ruleN: typeof g.ruleN === "number" ? g.ruleN : 3,
+    support: g.support || "ind",
     items: (g.items || []).map(it => ({ name: it.name })),
   }));
 }
@@ -171,6 +210,10 @@ function normalizeGoalFields(g) {
     ...g,
     tid: g.tid || makeId("t"),
     skipped: !!g.skipped,
+    type: ["tally", "duration"].includes(g.type) ? g.type : "percent",
+    durations: Array.isArray(g.durations) ? g.durations.filter(d => typeof d === "number") : [],
+    support: typeof g.support === "string" && g.support ? g.support : "ind",
+    usedSupport: typeof g.usedSupport === "string" && g.usedSupport ? g.usedSupport : "ind",
     fullGoal: g.fullGoal || "",
     target: typeof g.target === "number" ? g.target : null,
     targetOf: typeof g.targetOf === "number" ? g.targetOf : null,
@@ -185,7 +228,7 @@ function pointsFor(history, tid) {
   const pts = [];
   (history || []).forEach(entry => {
     (entry.goals || []).forEach(hg => {
-      if (hg.tid === tid) pts.push({ date: entry.date, correct: hg.correct || 0, incorrect: hg.incorrect || 0 });
+      if (hg.tid === tid) pts.push({ date: entry.date, correct: hg.correct || 0, incorrect: hg.incorrect || 0, duration: hg.duration || 0, support: hg.support });
     });
   });
   return pts;
@@ -199,7 +242,7 @@ function itemPointsFor(history, tid, name) {
       if (hg.tid !== tid) return;
       (hg.items || []).forEach(it => {
         if (String(it.name || "").trim().toLowerCase() === key) {
-          pts.push({ date: entry.date, correct: it.correct || 0, incorrect: it.incorrect || 0 });
+          pts.push({ date: entry.date, correct: it.correct || 0, incorrect: it.incorrect || 0, support: hg.support });
         }
       });
     });
@@ -217,6 +260,7 @@ function goalAtCriteria(goal, history) {
 }
 
 function pointPasses(p, type, target) {
+  if (type === "duration") return (p.duration || 0) >= target * 60;
   if (type === "percent") {
     const total = p.correct + p.incorrect;
     return total > 0 && Math.round((p.correct / total) * 100) >= target;
@@ -226,9 +270,18 @@ function pointPasses(p, type, target) {
 
 function isAtCriteria(goal, pastPoints) {
   if (typeof goal.target !== "number" || goal.target <= 0) return false;
-  const points = [...(pastPoints || [])];
-  const curTotal = (goal.correct || 0) + (goal.incorrect || 0);
-  if (curTotal > 0) points.push({ date: new Date().toISOString(), correct: goal.correct || 0, incorrect: goal.incorrect || 0 });
+  const expected = goal.support || "ind";
+  let points = (pastPoints || []).filter(p => (p.support || "ind") === expected);
+  if (goal.type === "duration") {
+    if ((goal.durations || []).length > 0 && (goal.usedSupport || "ind") === expected) {
+      points = [...points, { date: new Date().toISOString(), correct: goal.durations.length, incorrect: 0, duration: Math.max(...goal.durations), support: expected }];
+    }
+  } else {
+    const curTotal = (goal.correct || 0) + (goal.incorrect || 0);
+    if (curTotal > 0 && (goal.usedSupport || "ind") === expected) {
+      points = [...points, { date: new Date().toISOString(), correct: goal.correct || 0, incorrect: goal.incorrect || 0, support: expected }];
+    }
+  }
   if (points.length === 0) return false;
   if (goal.ruleMode === "total") {
     const now = new Date();
@@ -352,6 +405,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
   const [timerOpen, setTimerOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [itemPrompt, setItemPrompt] = useState(false);
+  const [supportOpen, setSupportOpen] = useState(false);
 
   const tick = useCallback(() => {
     onUpdate(goal.id, (prev) => {
@@ -378,6 +432,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
   }, [goal.timerRunning, tick]);
 
   const hasItems = (goal.items || []).length > 0;
+  const isDur = goal.type === "duration";
   const ai = hasItems ? Math.min(goal.activeItem || 0, goal.items.length - 1) : 0;
   const cur = hasItems ? goal.items[ai] : goal;
   const correct = cur.correct ?? 0;
@@ -395,6 +450,10 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
   const handlePlus = () => bump({ correct: correct + 1 });
   const handleMinus = () => bump({ incorrect: incorrect + 1 });
   const handleUndo = () => {
+    if (isDur) {
+      if ((goal.durations || []).length > 0) update({ durations: goal.durations.slice(0, -1) });
+      return;
+    }
     if (goal.type === "percent") {
       if (incorrect > 0) bump({ incorrect: incorrect - 1 });
       else if (correct > 0) bump({ correct: correct - 1 });
@@ -413,7 +472,8 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
 
   const doConfirm = (type) => {
     if (type === "tally") {
-      if (hasItems) onUpdate(goal.id, (prev) => ({ ...prev, items: (prev.items || []).map(it => ({ ...it, correct: 0, incorrect: 0 })) }));
+      if (isDur) update({ durations: [] });
+      else if (hasItems) onUpdate(goal.id, (prev) => ({ ...prev, items: (prev.items || []).map(it => ({ ...it, correct: 0, incorrect: 0 })) }));
       else update({ correct: 0, incorrect: 0 });
     }
     if (type === "timer") update({ timerRemaining: goal.timerDuration, timerRunning: false, timerAlert: false });
@@ -500,7 +560,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
         </div>
 
         <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-          {["percent", "tally"].map(t => (
+          {["percent", "tally", "duration"].map(t => (
             <button key={t} onClick={() => update({ type: t })} style={{
               flex: 1, padding: "6px 0", borderRadius: 8, border: "2px solid",
               borderColor: goal.type === t ? "#4f46e5" : "#e2e8f0",
@@ -508,9 +568,36 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
               color: goal.type === t ? "#fff" : "#64748b",
               fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s",
             }}>
-              {t === "percent" ? "% Correct" : "Tally"}
+              {t === "percent" ? "% Correct" : t === "tally" ? "Tally" : "Time"}
             </button>
           ))}
+        </div>
+
+        <div style={{ marginBottom: 10 }}>
+          <button onClick={() => setSupportOpen(v => !v)} style={{
+            display: "flex", alignItems: "center", width: "100%", gap: 6,
+            background: "none", border: "none", cursor: "pointer", padding: "2px 0",
+            fontFamily: "inherit",
+          }}>
+            <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#94a3b8" }}>Support</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: (goal.usedSupport || "ind") === (goal.support || "ind") ? "#4f46e5" : "#d97706" }}>
+              {goal.usedSupport || "ind"}{(goal.usedSupport || "ind") !== (goal.support || "ind") ? ` — goal is ${goal.support || "ind"}` : ""}
+            </span>
+            <span style={{ fontSize: 12, marginLeft: "auto", color: "#cbd5e1" }}>{supportOpen ? "▲" : "▼"}</span>
+          </button>
+          {supportOpen && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+              {SUPPORT_CODES.map(c => (
+                <button key={c} onClick={() => update({ usedSupport: c })} style={{
+                  padding: "4px 9px", borderRadius: 6,
+                  border: `1.5px solid ${(goal.usedSupport || "ind") === c ? "#4f46e5" : "#e2e8f0"}`,
+                  background: (goal.usedSupport || "ind") === c ? "#ede9fe" : "#f8fafc",
+                  color: (goal.usedSupport || "ind") === c ? "#4f46e5" : "#64748b",
+                  fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+                }}>{c}</button>
+              ))}
+            </div>
+          )}
         </div>
 
         {itemPrompt && (
@@ -556,7 +643,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
         }}>
           <div style={{ fontFamily: "monospace", fontSize: 22, fontWeight: 700, color: "#1e293b" }}>
             {hasItems && <span style={{ fontSize: 12, color: "#4f46e5", display: "block", fontFamily: "inherit" }}>{cur.name}</span>}
-            {goal.type === "percent" ? `${correct}/${total}` : `${correct}x`}
+            {isDur ? (goal.durations.length ? formatTime(Math.max(...goal.durations)) : "—") : goal.type === "percent" ? `${correct}/${total}` : `${correct}x`}
           </div>
           {goal.type === "percent" && (
             <div style={{
@@ -569,15 +656,29 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
           {goal.type === "tally" && (
             <div style={{ fontSize: 13, color: "#94a3b8", fontWeight: 600 }}>occurrences</div>
           )}
+          {isDur && (
+            <div style={{ fontSize: 13, color: "#94a3b8", fontWeight: 600 }}>{goal.durations.length} stretch{goal.durations.length === 1 ? "" : "es"} · longest</div>
+          )}
         </div>
 
+        {isDur && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
+            {DURATION_OPTIONS.map(opt => (
+              <button key={opt.seconds} onClick={() => update({ durations: [...(goal.durations || []), opt.seconds] })} style={{
+                padding: "10px 12px", borderRadius: 9, border: "1.5px solid #c7d2fe",
+                background: "#eef2ff", color: "#4f46e5", fontSize: 14, fontWeight: 700,
+                cursor: "pointer", fontFamily: "inherit",
+              }}>{opt.label}</button>
+            ))}
+          </div>
+        )}
         <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-          <button onClick={handlePlus} style={{
+          {!isDur && <button onClick={handlePlus} style={{
             flex: goal.type === "percent" ? 1 : 2,
             padding: "14px 0", borderRadius: 12, border: "none",
             background: "#22c55e", color: "#fff", fontSize: 24, fontWeight: 700,
             cursor: "pointer", boxShadow: "0 3px 0 #16a34a",
-          }}>+</button>
+          }}>+</button>}
           {goal.type === "percent" && (
             <button onClick={handleMinus} style={{
               flex: 1, padding: "14px 0", borderRadius: 12, border: "none",
@@ -690,7 +791,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
             </span>
             {typeof goal.target === "number" && !detailsOpen && (
               <span style={{ fontSize: 11, color: "#4f46e5", fontWeight: 700 }}>
-                {goal.ruleMode === "opps" ? `${goal.target}/${goal.targetOf ?? "?"} opps` : `${goal.target}${goal.type === "percent" ? "%" : "x"} · ${goal.ruleMode === "total" ? "month total" : goal.ruleMode === "across" ? `${goal.ruleN} sessions` : `${goal.ruleN} in a row`}`}
+                {goal.ruleMode === "opps" ? `${goal.target}/${goal.targetOf ?? "?"} opps` : `${goal.target}${goal.type === "percent" ? "%" : goal.type === "duration" ? "min" : "x"} · ${goal.ruleMode === "total" ? "month total" : goal.ruleMode === "across" ? `${goal.ruleN} sessions` : `${goal.ruleN} in a row`}`}
               </span>
             )}
             <span style={{ fontSize: 12, marginLeft: "auto", color: "#cbd5e1" }}>{detailsOpen ? "▲" : "▼"}</span>
@@ -713,6 +814,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
                 const p = parseGoalText(goal.fullGoal);
                 if (Object.keys(p).length === 0) return;
                 if (p.timerDuration) p.timerRemaining = p.timerDuration;
+                if (p.support) p.usedSupport = p.support;
                 update(p);
               }} style={{
                 width: "100%", marginBottom: 8, padding: "8px", borderRadius: 8,
@@ -747,7 +849,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
                     <span style={{ fontSize: 12, color: "#94a3b8" }}>opps</span>
                   </>
                 ) : (
-                  <span style={{ fontSize: 12, color: "#94a3b8" }}>{goal.type === "percent" ? "%" : "x"}</span>
+                  <span style={{ fontSize: 12, color: "#94a3b8" }}>{goal.type === "percent" ? "%" : goal.type === "duration" ? "min" : "x"}</span>
                 )}
                 {(goal.ruleMode === "row" || goal.ruleMode === "across") && (
                   <input
@@ -773,6 +875,19 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
                 ))}
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>Written support</span>
+                {SUPPORT_CODES.map(c => (
+                  <button key={c} onClick={() => update({ support: c, usedSupport: c })} style={{
+                    padding: "3px 8px", borderRadius: 6,
+                    border: `1.5px solid ${(goal.support || "ind") === c ? "#4f46e5" : "#e2e8f0"}`,
+                    background: (goal.support || "ind") === c ? "#ede9fe" : "#fff",
+                    color: (goal.support || "ind") === c ? "#4f46e5" : "#64748b",
+                    fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+                  }}>{c}</button>
+                ))}
+              </div>
+              {goal.type !== "duration" && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>Items</span>
                 {(goal.items || []).map((it, i) => (
                   <span key={i} style={{ fontSize: 12, color: "#475569", border: "1.5px solid #e2e8f0", borderRadius: 999, padding: "3px 8px", background: "#fff" }}>
@@ -786,6 +901,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
                 }}>+ item</button>
                 <span style={{ fontSize: 11, color: "#94a3b8" }}>(optional — for multi-item goals)</span>
               </div>
+              )}
               {history && history.length > 0 && (
                 <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 8, fontFamily: "monospace" }}>
                   {history.slice(-4).map((p, i) => {
@@ -831,6 +947,11 @@ function SummaryLine({ goal, index }) {
   } else {
     dataStr = timerLabel ? `${total}x / ${timerLabel}` : `${total}x`;
   }
+  if (goal.type === "duration") {
+    dataStr = (goal.durations || []).length
+      ? `longest ${formatTime(Math.max(...goal.durations))} (${goal.durations.length} stretch${goal.durations.length === 1 ? "" : "es"})`
+      : "no stretches";
+  }
   if ((goal.items || []).length > 0) {
     dataStr = goal.items.map(it => {
       const t2 = (it.correct || 0) + (it.incorrect || 0);
@@ -840,7 +961,7 @@ function SummaryLine({ goal, index }) {
 
   return (
     <div style={{ marginBottom: 12 }}>
-      <span style={{ fontWeight: 600, color: "#e2e8f0", fontSize: 14 }}>{label}</span>
+      <span style={{ fontWeight: 600, color: "#e2e8f0", fontSize: 14 }}>{label}{(goal.usedSupport || "ind") !== "ind" ? ` (${goal.usedSupport})` : ""}</span>
       <span style={{ color: "#94a3b8", fontSize: 13 }}> — </span>
       <span style={{ color: "#cbd5e1", fontSize: 13, fontFamily: "monospace" }}>{dataStr}</span>
       {goal.notes.trim() && (
@@ -1217,12 +1338,13 @@ function App() {
       const cleanGoal = (t) => normalizeGoalFields({
         tid: typeof t.tid === "string" ? t.tid : null,
         label: typeof t.label === "string" ? t.label : "",
-        type: t.type === "tally" ? "tally" : "percent",
+        type: ["tally", "duration"].includes(t.type) ? t.type : "percent",
         timerDuration: typeof t.timerDuration === "number" ? t.timerDuration : null,
         fullGoal: t.fullGoal,
         target: t.target,
         ruleMode: t.ruleMode,
         ruleN: t.ruleN,
+        support: t.support,
       });
       const incoming = parsed.students.filter(s => s && typeof s.name === "string" && s.name.trim());
       let added = 0, merged = 0, newSessions = 0;
@@ -1290,13 +1412,18 @@ function App() {
       let dataStr = g.type === "percent"
         ? `${correct}/${total} — ${pct ?? "—"}% accuracy`
         : timerLabel ? `${total}x / ${timerLabel}` : `${total}x`;
+      if (g.type === "duration") {
+        dataStr = (g.durations || []).length
+          ? `longest ${formatTime(Math.max(...g.durations))} (${g.durations.length} stretch${g.durations.length === 1 ? "" : "es"})`
+          : "no stretches";
+      }
       if ((g.items || []).length > 0) {
         dataStr = g.items.map(it => {
           const t2 = (it.correct || 0) + (it.incorrect || 0);
           return g.type === "percent" ? `${it.name} ${it.correct || 0}/${t2}` : `${it.name} ${it.correct || 0}x`;
         }).join(", ");
       }
-      let line = `${label} — ${dataStr}`;
+      let line = `${label}${(g.usedSupport || "ind") !== "ind" ? ` (${g.usedSupport})` : ""} — ${dataStr}`;
       if (g.notes.trim()) line += `; ${g.notes.trim()}`;
       html += `<p>${line}</p>`;
     });
@@ -1322,13 +1449,18 @@ function App() {
       let dataStr = g.type === "percent"
         ? `${correct}/${total} — ${pct ?? "—"}% accuracy`
         : timerLabel ? `${total}x / ${timerLabel}` : `${total}x`;
+      if (g.type === "duration") {
+        dataStr = (g.durations || []).length
+          ? `longest ${formatTime(Math.max(...g.durations))} (${g.durations.length} stretch${g.durations.length === 1 ? "" : "es"})`
+          : "no stretches";
+      }
       if ((g.items || []).length > 0) {
         dataStr = g.items.map(it => {
           const t2 = (it.correct || 0) + (it.incorrect || 0);
           return g.type === "percent" ? `${it.name} ${it.correct || 0}/${t2}` : `${it.name} ${it.correct || 0}x`;
         }).join(", ");
       }
-      let line = `${label} — ${dataStr}`;
+      let line = `${label}${(g.usedSupport || "ind") !== "ind" ? ` (${g.usedSupport})` : ""} — ${dataStr}`;
       if (g.notes.trim()) line += `; ${g.notes.trim()}`;
       lines.push(line);
       lines.push("");
@@ -1370,11 +1502,17 @@ function App() {
       let roster = prev.roster;
       if (prev.selectedId !== "quick") {
         const logged = cur.goals
-          .filter(g => !g.skipped && ((g.items || []).length > 0
-            ? g.items.some(it => (it.correct || 0) + (it.incorrect || 0) > 0)
-            : (g.correct || 0) + (g.incorrect || 0) > 0))
+          .filter(g => !g.skipped && (g.type === "duration"
+            ? (g.durations || []).length > 0
+            : (g.items || []).length > 0
+              ? g.items.some(it => (it.correct || 0) + (it.incorrect || 0) > 0)
+              : (g.correct || 0) + (g.incorrect || 0) > 0))
           .map(g => {
-            const base = { tid: g.tid, label: g.label, type: g.type, correct: g.correct || 0, incorrect: g.incorrect || 0 };
+            const base = { tid: g.tid, label: g.label, type: g.type, correct: g.correct || 0, incorrect: g.incorrect || 0, support: g.usedSupport || "ind" };
+            if (g.type === "duration" && (g.durations || []).length > 0) {
+              base.duration = Math.max(...g.durations);
+              base.correct = g.durations.length;
+            }
             if ((g.items || []).length > 0) {
               const its = g.items
                 .filter(it => (it.correct || 0) + (it.incorrect || 0) > 0)

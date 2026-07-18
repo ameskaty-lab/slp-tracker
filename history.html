@@ -86,7 +86,7 @@
         addGoal(hg.tid, hg.label, hg.type);
         // keep latest label from history if template missing
         if (byTid[hg.tid] && !byTid[hg.tid].label && hg.label) byTid[hg.tid].label = hg.label;
-        byTid[hg.tid].points.push({ date: entry.date, correct: hg.correct || 0, incorrect: hg.incorrect || 0, items: hg.items });
+        byTid[hg.tid].points.push({ date: entry.date, correct: hg.correct || 0, incorrect: hg.incorrect || 0, items: hg.items, duration: hg.duration || 0, support: hg.support });
       });
     });
     var tplByTid = {};
@@ -103,12 +103,12 @@
       if (g.points.length === 0 && !tplByTid[tid]) return;
       var tpl = tplByTid[tid] || {};
       var target = typeof tpl.target === "number" ? tpl.target : null;
-      var isPct = g.type !== "tally";
+      var isPct = g.type !== "tally" && g.type !== "duration";
       html += '<div class="goal"><h2>' + esc(g.label || ("Goal " + (gi + 1))) + "</h2>";
       if (tpl.fullGoal) html += '<div class="fullgoal">' + esc(tpl.fullGoal) + "</div>";
       if (target !== null) {
-        html += '<div class="chip">Target ' + target + (isPct ? "%" : "x") +
-          " · " + (tpl.ruleMode === "total" ? "month total" : (tpl.ruleN || 3) + " in a row") + "</div>";
+        html += '<div class="chip">Target ' + target + (isPct ? "%" : g.type === "duration" ? "min" : "x") +
+          " · " + (tpl.ruleMode === "total" ? "month total" : tpl.ruleMode === "across" ? (tpl.ruleN || 3) + " sessions" : tpl.ruleMode === "opps" ? "of last " + (tpl.targetOf || "?") + " opps" : (tpl.ruleN || 3) + " in a row") + ((tpl.support && tpl.support !== "ind") ? " · " + esc(tpl.support) : "") + "</div>";
       }
       if (g.points.length === 0) {
         html += '<div class="fullgoal">No sessions logged for this goal yet.</div></div>';
@@ -130,7 +130,8 @@
         curMonth = curMonthName; curMonthKey = mk;
         var total = p.correct + p.incorrect;
         var pct = isPct && total > 0 ? Math.round((p.correct / total) * 100) : null;
-        var met = target !== null && (isPct ? (pct !== null && pct >= target) : p.correct >= target);
+        var supOk = (p.support || "ind") === (tpl.support || "ind");
+        var met = supOk && target !== null && (g.type === "duration" ? (p.duration || 0) >= target * 60 : isPct ? (pct !== null && pct >= target) : p.correct >= target);
         mc += p.correct; mt += total;
         var scoreTxt = isPct ? p.correct + "/" + total : p.correct + "x";
         if (p.items && p.items.length) {
@@ -139,6 +140,11 @@
             return esc(it.name) + " " + (isPct ? (it.correct || 0) + "/" + t2 : (it.correct || 0) + "x");
           }).join(", ") + ")";
         }
+        if (g.type === "duration") {
+          var dm = Math.floor((p.duration || 0) / 60), ds = (p.duration || 0) % 60;
+          scoreTxt = dm + ":" + (ds < 10 ? "0" : "") + ds + " (" + p.correct + "x)";
+        }
+        if (p.support && p.support !== "ind") scoreTxt += " ·" + esc(p.support);
         html += "<tr><td>" + fmtDate(p.date) + "</td><td>" + scoreTxt + "</td><td>" +
           (isPct ? (pct === null ? "—" : pct + "%") : p.correct) + "</td><td" + (met ? ' class="met">✓' : ">") + "</td></tr>";
       });
