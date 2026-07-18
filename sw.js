@@ -1,8 +1,9 @@
-const CACHE_NAME = "slp-tracker-v7";
+const CACHE_NAME = "slp-tracker-v9";
 const URLS_TO_CACHE = [
   "./",
   "./index.html",
   "./history.html",
+  "./goalbank.js",
   "./manifest.json",
   "https://unpkg.com/react@18/umd/react.production.min.js",
   "https://unpkg.com/react-dom@18/umd/react-dom.production.min.js",

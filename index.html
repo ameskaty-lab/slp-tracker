@@ -24,6 +24,7 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="goalbank.js"></script>
 
 <script type="text/plain" id="app-source">
 const { useState, useEffect, useRef, useCallback } = React;
@@ -1020,7 +1021,47 @@ function SummaryLine({ goal, index }) {
   );
 }
 
-function StudentBar({ roster, selectedId, onSelect, onAdd, onManage, onHistory }) {
+function BankModal({ onPick, onClose, targetName }) {
+  const [openD, setOpenD] = useState(null);
+  const bank = window.GOAL_BANK || [];
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}>
+      <div style={{ background: "#fff", borderRadius: 16, maxWidth: 440, width: "94%", maxHeight: "82vh", overflowY: "auto", padding: "16px", boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+          <span style={{ fontSize: 15, fontWeight: 700, color: "#1e293b" }}>Goal Bank → {targetName}</span>
+          <a href="https://docs.google.com/document/d/1iZb3exObEJfBlzNWPZB1FGtTWH-0mvv3Y6TmwK25Lyk/edit" target="_blank" rel="noreferrer" style={{ fontSize: 11, color: "#4f46e5", marginLeft: "auto", whiteSpace: "nowrap" }}>edit doc ↗</a>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#cbd5e1", fontSize: 18, cursor: "pointer", lineHeight: 1 }}>✕</button>
+        </div>
+        {bank.length === 0 && (
+          <div style={{ fontSize: 13, color: "#94a3b8" }}>Goal bank not loaded (goalbank.js missing).</div>
+        )}
+        {bank.map((d, di) => (
+          <div key={di} style={{ marginBottom: 6 }}>
+            <button onClick={() => setOpenD(openD === di ? null : di)} style={{
+              width: "100%", textAlign: "left", padding: "9px 10px", borderRadius: 9,
+              border: "1.5px solid #e2e8f0", background: openD === di ? "#eef2ff" : "#f8fafc",
+              color: "#1e293b", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit",
+            }}>{openD === di ? "▾ " : "▸ "}{d.d}</button>
+            {openD === di && d.s.map((st, si) => (
+              <div key={si} style={{ margin: "6px 0 8px 6px" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#94a3b8", margin: "6px 0 4px" }}>{st.n}</div>
+                {st.g.map((t, gi) => (
+                  <button key={gi} onClick={() => onPick(t, st.n)} style={{
+                    display: "block", width: "100%", textAlign: "left", padding: "8px 10px", marginBottom: 4,
+                    borderRadius: 8, border: "1.5px solid #e2e8f0", background: "#fff",
+                    color: "#334155", fontSize: 12, lineHeight: 1.4, cursor: "pointer", fontFamily: "inherit",
+                  }}>{t}</button>
+                ))}
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StudentBar({ roster, selectedId, onSelect, onAdd, onManage, onHistory, onBank }) {
   const pill = (active) => ({
     padding: "7px 14px", borderRadius: 999, border: "2px solid",
     borderColor: active ? "#4f46e5" : "#e2e8f0",
@@ -1053,6 +1094,11 @@ function StudentBar({ roster, selectedId, onSelect, onAdd, onManage, onHistory }
           marginBottom: 4,
         }}>🕘</button>
       )}
+      <button onClick={onBank} title="Goal bank" style={{
+        padding: "7px 10px", borderRadius: 10, border: "2px solid #e2e8f0",
+        background: "#fff", color: "#64748b", fontSize: 14, cursor: "pointer", flexShrink: 0,
+        marginBottom: 4,
+      }}>📚</button>
       <button onClick={onManage} title="Manage roster" style={{
         padding: "7px 10px", borderRadius: 10, border: "2px solid #e2e8f0",
         background: "#fff", color: "#64748b", fontSize: 14, cursor: "pointer", flexShrink: 0,
@@ -1229,6 +1275,7 @@ function App() {
   const [showRoster, setShowRoster] = useState(false);
   const [addingStudent, setAddingStudent] = useState(false);
   const [shareStatus, setShareStatus] = useState(null);
+  const [showBank, setShowBank] = useState(false);
 
   const { roster, selectedId, sessions } = store;
   const session = sessions[selectedId] || defaultSession();
@@ -1328,6 +1375,21 @@ function App() {
         selectedId: prev.selectedId === id ? "quick" : prev.selectedId,
         sessions,
       };
+    });
+  };
+
+  const addFromBank = (text, strandName) => {
+    setShowBank(false);
+    setSession(prev => {
+      if (prev.goals.length >= 10) return prev;
+      const g = newGoal();
+      g.label = strandName;
+      g.fullGoal = text;
+      const p = parseGoalText(text);
+      Object.assign(g, p);
+      if (p.timerDuration) g.timerRemaining = p.timerDuration;
+      if (p.support) g.usedSupport = p.support;
+      return { ...prev, goals: [...prev.goals, g] };
     });
   };
 
@@ -1622,6 +1684,14 @@ function App() {
       fontFamily: "'DM Sans', 'Nunito', system-ui, sans-serif",
       paddingBottom: 100,
     }}>
+      {showBank && (
+        <BankModal
+          targetName={selectedStudent ? selectedStudent.name : "Quick session"}
+          onPick={addFromBank}
+          onClose={() => setShowBank(false)}
+        />
+      )}
+
       {addingStudent && (
         <PromptModal
           title="Add Student"
@@ -1650,6 +1720,7 @@ function App() {
         onAdd={() => setAddingStudent(true)}
         onManage={() => setShowRoster(v => !v)}
         onHistory={openHistory}
+        onBank={() => setShowBank(true)}
       />
 
       {showRoster && (
