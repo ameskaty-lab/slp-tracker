@@ -155,6 +155,7 @@ function newGoal() {
     skipped: false,
     support: "ind",
     usedSupport: "ind",
+    sup: {},
     items: [],
     activeItem: 0,
     fullGoal: "",
@@ -214,6 +215,7 @@ function normalizeGoalFields(g) {
     durations: Array.isArray(g.durations) ? g.durations.filter(d => typeof d === "number") : [],
     support: typeof g.support === "string" && g.support ? g.support : "ind",
     usedSupport: typeof g.usedSupport === "string" && g.usedSupport ? g.usedSupport : "ind",
+    sup: (g.sup && typeof g.sup === "object" && !Array.isArray(g.sup)) ? g.sup : {},
     fullGoal: g.fullGoal || "",
     target: typeof g.target === "number" ? g.target : null,
     targetOf: typeof g.targetOf === "number" ? g.targetOf : null,
@@ -277,9 +279,11 @@ function isAtCriteria(goal, pastPoints) {
       points = [...points, { date: new Date().toISOString(), correct: goal.durations.length, incorrect: 0, duration: Math.max(...goal.durations), support: expected }];
     }
   } else {
-    const curTotal = (goal.correct || 0) + (goal.incorrect || 0);
-    if (curTotal > 0 && (goal.usedSupport || "ind") === expected) {
-      points = [...points, { date: new Date().toISOString(), correct: goal.correct || 0, incorrect: goal.incorrect || 0, support: expected }];
+    const pC = Object.values(goal.sup || {}).reduce((s, b) => s + (b.c || 0), 0);
+    const pI = Object.values(goal.sup || {}).reduce((s, b) => s + (b.i || 0), 0);
+    const curTotal = (goal.correct || 0) + (goal.incorrect || 0) + pC + pI;
+    if (curTotal > 0) {
+      points = [...points, { date: new Date().toISOString(), correct: goal.correct || 0, incorrect: (goal.incorrect || 0) + pC + pI, support: expected }];
     }
   }
   if (points.length === 0) return false;
@@ -433,32 +437,54 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
 
   const hasItems = (goal.items || []).length > 0;
   const isDur = goal.type === "duration";
+  const selSup = goal.usedSupport || "ind";
+  const wrSup = goal.support || "ind";
+  const offLevel = !isDur && !hasItems && selSup !== "ind" && selSup !== "sp" && selSup !== wrSup;
+  const supTot = Object.values(goal.sup || {}).reduce((a, b) => ({ c: a.c + (b.c || 0), i: a.i + (b.i || 0) }), { c: 0, i: 0 });
   const ai = hasItems ? Math.min(goal.activeItem || 0, goal.items.length - 1) : 0;
-  const cur = hasItems ? goal.items[ai] : goal;
+  const selBucket = offLevel ? ((goal.sup || {})[selSup] || { c: 0, i: 0 }) : null;
+  const cur = hasItems ? goal.items[ai] : selBucket ? { correct: selBucket.c, incorrect: selBucket.i } : goal;
   const correct = cur.correct ?? 0;
   const incorrect = cur.incorrect ?? 0;
   const total = goal.type === "percent" ? correct + incorrect : correct;
   const pct = total > 0 && goal.type === "percent" ? Math.round((correct / total) * 100) : null;
 
   const update = (fields) => onUpdate(goal.id, (prev) => ({ ...prev, ...fields }));
-  const setItem = (idx, fields) => onUpdate(goal.id, (prev) => ({
-    ...prev,
-    items: (prev.items || []).map((it, i) => (i === idx ? { ...it, ...fields } : it)),
-  }));
-  const bump = (fields) => (hasItems ? setItem(ai, fields) : update(fields));
+  const bumpBy = (field, delta) => {
+    if (hasItems) {
+      onUpdate(goal.id, (prev) => {
+        const idx = Math.min(prev.activeItem || 0, (prev.items || []).length - 1);
+        return {
+          ...prev,
+          items: (prev.items || []).map((it, i) => (i === idx ? { ...it, [field]: Math.max(0, (it[field] || 0) + delta) } : it)),
+        };
+      });
+    } else if (offLevel) {
+      onUpdate(goal.id, (prev) => {
+        const sup = { ...(prev.sup || {}) };
+        const b = { c: 0, i: 0, ...(sup[selSup] || {}) };
+        const k = field === "correct" ? "c" : "i";
+        b[k] = Math.max(0, (b[k] || 0) + delta);
+        sup[selSup] = b;
+        return { ...prev, sup };
+      });
+    } else {
+      onUpdate(goal.id, (prev) => ({ ...prev, [field]: Math.max(0, (prev[field] || 0) + delta) }));
+    }
+  };
 
-  const handlePlus = () => bump({ correct: correct + 1 });
-  const handleMinus = () => bump({ incorrect: incorrect + 1 });
+  const handlePlus = () => bumpBy("correct", 1);
+  const handleMinus = () => bumpBy("incorrect", 1);
   const handleUndo = () => {
     if (isDur) {
-      if ((goal.durations || []).length > 0) update({ durations: goal.durations.slice(0, -1) });
+      if ((goal.durations || []).length > 0) onUpdate(goal.id, (prev) => ({ ...prev, durations: (prev.durations || []).slice(0, -1) }));
       return;
     }
     if (goal.type === "percent") {
-      if (incorrect > 0) bump({ incorrect: incorrect - 1 });
-      else if (correct > 0) bump({ correct: correct - 1 });
+      if (incorrect > 0) bumpBy("incorrect", -1);
+      else if (correct > 0) bumpBy("correct", -1);
     } else {
-      if (correct > 0) bump({ correct: correct - 1 });
+      if (correct > 0) bumpBy("correct", -1);
     }
   };
 
@@ -474,7 +500,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
     if (type === "tally") {
       if (isDur) update({ durations: [] });
       else if (hasItems) onUpdate(goal.id, (prev) => ({ ...prev, items: (prev.items || []).map(it => ({ ...it, correct: 0, incorrect: 0 })) }));
-      else update({ correct: 0, incorrect: 0 });
+      else update({ correct: 0, incorrect: 0, sup: {} });
     }
     if (type === "timer") update({ timerRemaining: goal.timerDuration, timerRunning: false, timerAlert: false });
     setConfirm(null);
@@ -581,7 +607,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
           }}>
             <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#94a3b8" }}>Support</span>
             <span style={{ fontSize: 12, fontWeight: 700, color: (goal.usedSupport || "ind") === (goal.support || "ind") ? "#4f46e5" : "#d97706" }}>
-              {goal.usedSupport || "ind"}{(goal.usedSupport || "ind") !== (goal.support || "ind") ? ` — goal is ${goal.support || "ind"}` : ""}
+              {selSup}{offLevel ? " · taps count as prompted" : ""}
             </span>
             <span style={{ fontSize: 12, marginLeft: "auto", color: "#cbd5e1" }}>{supportOpen ? "▲" : "▼"}</span>
           </button>
@@ -594,7 +620,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
                   background: (goal.usedSupport || "ind") === c ? "#ede9fe" : "#f8fafc",
                   color: (goal.usedSupport || "ind") === c ? "#4f46e5" : "#64748b",
                   fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
-                }}>{c}</button>
+                }}>{c}{(goal.sup && goal.sup[c] && ((goal.sup[c].c || 0) + (goal.sup[c].i || 0)) > 0) ? ` · ${goal.sup[c].c || 0}/${(goal.sup[c].c || 0) + (goal.sup[c].i || 0)}` : ""}</button>
               ))}
             </div>
           )}
@@ -660,11 +686,24 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
             <div style={{ fontSize: 13, color: "#94a3b8", fontWeight: 600 }}>{goal.durations.length} stretch{goal.durations.length === 1 ? "" : "es"} · longest</div>
           )}
         </div>
+        {!hasItems && !isDur && (supTot.c + supTot.i) > 0 && (() => {
+          const allT = (goal.correct || 0) + (goal.incorrect || 0) + supTot.c + supTot.i;
+          const indPct = allT > 0 ? Math.round(((goal.correct || 0) / allT) * 100) : 0;
+          return (
+            <div style={{ fontSize: 12, color: "#64748b", margin: "-6px 0 10px", fontFamily: "monospace" }}>
+              ind {goal.correct || 0}/{allT} ({indPct}%)
+              {Object.entries(goal.sup || {}).filter(([c2, b]) => (b.c || 0) + (b.i || 0) > 0).map(([c2, b]) => {
+                const wPct = allT > 0 ? Math.round((((goal.correct || 0) + (b.c || 0)) / allT) * 100) : 0;
+                return <span key={c2}> · w/{c2} {(goal.correct || 0) + (b.c || 0)}/{allT} ({wPct}%)</span>;
+              })}
+            </div>
+          );
+        })()}
 
         {isDur && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
             {DURATION_OPTIONS.map(opt => (
-              <button key={opt.seconds} onClick={() => update({ durations: [...(goal.durations || []), opt.seconds] })} style={{
+              <button key={opt.seconds} onClick={() => onUpdate(goal.id, (prev) => ({ ...prev, durations: [...(prev.durations || []), opt.seconds] }))} style={{
                 padding: "10px 12px", borderRadius: 9, border: "1.5px solid #c7d2fe",
                 background: "#eef2ff", color: "#4f46e5", fontSize: 14, fontWeight: 700,
                 cursor: "pointer", fontFamily: "inherit",
@@ -883,7 +922,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
                     background: (goal.support || "ind") === c ? "#ede9fe" : "#fff",
                     color: (goal.support || "ind") === c ? "#4f46e5" : "#64748b",
                     fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
-                  }}>{c}</button>
+                  }}>{c}{(goal.sup && goal.sup[c] && ((goal.sup[c].c || 0) + (goal.sup[c].i || 0)) > 0) ? ` · ${goal.sup[c].c || 0}/${(goal.sup[c].c || 0) + (goal.sup[c].i || 0)}` : ""}</button>
                 ))}
               </div>
               {goal.type !== "duration" && (
@@ -902,13 +941,14 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
                 <span style={{ fontSize: 11, color: "#94a3b8" }}>(optional — for multi-item goals)</span>
               </div>
               )}
-              {history && history.length > 0 && (
+              {(
                 <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 8, fontFamily: "monospace" }}>
                   {history.slice(-4).map((p, i) => {
                     const t = p.correct + p.incorrect;
                     const s = goal.type === "percent" ? `${p.correct}/${t}` : `${p.correct}x`;
                     return <span key={i} style={{ marginRight: 8 }}>{new Date(p.date).toLocaleDateString("en-US", { month: "numeric", day: "numeric" })} {s}</span>;
                   })}
+                  <span style={{ color: "#4f46e5" }}>now {isDur ? (goal.durations.length ? formatTime(Math.max(...goal.durations)) : "—") : goal.type === "percent" ? `${correct}/${total}` : `${correct}x`} · saves on New Session</span>
                 </div>
               )}
             </div>
@@ -947,6 +987,15 @@ function SummaryLine({ goal, index }) {
   } else {
     dataStr = timerLabel ? `${total}x / ${timerLabel}` : `${total}x`;
   }
+  const supAgg = Object.entries(goal.sup || {}).filter(([c2, b]) => (b.c || 0) + (b.i || 0) > 0);
+  if (goal.type === "percent" && supAgg.length > 0 && (goal.items || []).length === 0) {
+    const allT = correct + incorrect + supAgg.reduce((s, [c2, b]) => s + (b.c || 0) + (b.i || 0), 0);
+    const indPct = allT > 0 ? Math.round((correct / allT) * 100) : 0;
+    dataStr = `${correct}/${allT} — ${indPct}% ind` + supAgg.map(([c2, b]) => {
+      const wPct = allT > 0 ? Math.round(((correct + (b.c || 0)) / allT) * 100) : 0;
+      return `; with ${c2} ${correct + (b.c || 0)}/${allT} — ${wPct}%`;
+    }).join("");
+  }
   if (goal.type === "duration") {
     dataStr = (goal.durations || []).length
       ? `longest ${formatTime(Math.max(...goal.durations))} (${goal.durations.length} stretch${goal.durations.length === 1 ? "" : "es"})`
@@ -961,7 +1010,7 @@ function SummaryLine({ goal, index }) {
 
   return (
     <div style={{ marginBottom: 12 }}>
-      <span style={{ fontWeight: 600, color: "#e2e8f0", fontSize: 14 }}>{label}{(goal.usedSupport || "ind") !== "ind" ? ` (${goal.usedSupport})` : ""}</span>
+      <span style={{ fontWeight: 600, color: "#e2e8f0", fontSize: 14 }}>{label}</span>
       <span style={{ color: "#94a3b8", fontSize: 13 }}> — </span>
       <span style={{ color: "#cbd5e1", fontSize: 13, fontFamily: "monospace" }}>{dataStr}</span>
       {goal.notes.trim() && (
@@ -1345,6 +1394,8 @@ function App() {
         ruleMode: t.ruleMode,
         ruleN: t.ruleN,
         support: t.support,
+        targetOf: t.targetOf,
+        items: t.items,
       });
       const incoming = parsed.students.filter(s => s && typeof s.name === "string" && s.name.trim());
       let added = 0, merged = 0, newSessions = 0;
@@ -1362,6 +1413,7 @@ function App() {
         const local = newRoster[idx];
         const localGoals = [...(local.goals || [])];
         const beforeLen = localGoals.length;
+        let updatedTpl = false;
         const tidMap = {};
         inGoals.forEach(ig => {
           let match = localGoals.find(lg => lg.tid === ig.tid);
@@ -1370,6 +1422,9 @@ function App() {
           }
           if (match) {
             tidMap[ig.tid] = match.tid;
+            const mi = localGoals.indexOf(match);
+            localGoals[mi] = { ...ig, tid: match.tid };
+            updatedTpl = true;
           } else {
             localGoals.push(ig);
             tidMap[ig.tid] = ig.tid;
@@ -1383,7 +1438,7 @@ function App() {
           .sort((a, b) => new Date(a.date) - new Date(b.date))
           .slice(-40);
         newRoster[idx] = { ...local, goals: localGoals, history };
-        if (extra.length > 0 || localGoals.length > beforeLen) merged++;
+        if (extra.length > 0 || localGoals.length > beforeLen || updatedTpl) merged++;
         newSessions += extra.length;
       });
       if (added === 0 && merged === 0) {
@@ -1412,6 +1467,15 @@ function App() {
       let dataStr = g.type === "percent"
         ? `${correct}/${total} — ${pct ?? "—"}% accuracy`
         : timerLabel ? `${total}x / ${timerLabel}` : `${total}x`;
+      const supAgg = Object.entries(g.sup || {}).filter(([c2, b]) => (b.c || 0) + (b.i || 0) > 0);
+      if (g.type === "percent" && supAgg.length > 0 && (g.items || []).length === 0) {
+        const allT = correct + incorrect + supAgg.reduce((s, [c2, b]) => s + (b.c || 0) + (b.i || 0), 0);
+        const indPct = allT > 0 ? Math.round((correct / allT) * 100) : 0;
+        dataStr = `${correct}/${allT} — ${indPct}% ind` + supAgg.map(([c2, b]) => {
+          const wPct = allT > 0 ? Math.round(((correct + (b.c || 0)) / allT) * 100) : 0;
+          return `; with ${c2} ${correct + (b.c || 0)}/${allT} — ${wPct}%`;
+        }).join("");
+      }
       if (g.type === "duration") {
         dataStr = (g.durations || []).length
           ? `longest ${formatTime(Math.max(...g.durations))} (${g.durations.length} stretch${g.durations.length === 1 ? "" : "es"})`
@@ -1423,7 +1487,7 @@ function App() {
           return g.type === "percent" ? `${it.name} ${it.correct || 0}/${t2}` : `${it.name} ${it.correct || 0}x`;
         }).join(", ");
       }
-      let line = `${label}${(g.usedSupport || "ind") !== "ind" ? ` (${g.usedSupport})` : ""} — ${dataStr}`;
+      let line = `${label} — ${dataStr}`;
       if (g.notes.trim()) line += `; ${g.notes.trim()}`;
       html += `<p>${line}</p>`;
     });
@@ -1449,6 +1513,15 @@ function App() {
       let dataStr = g.type === "percent"
         ? `${correct}/${total} — ${pct ?? "—"}% accuracy`
         : timerLabel ? `${total}x / ${timerLabel}` : `${total}x`;
+      const supAgg = Object.entries(g.sup || {}).filter(([c2, b]) => (b.c || 0) + (b.i || 0) > 0);
+      if (g.type === "percent" && supAgg.length > 0 && (g.items || []).length === 0) {
+        const allT = correct + incorrect + supAgg.reduce((s, [c2, b]) => s + (b.c || 0) + (b.i || 0), 0);
+        const indPct = allT > 0 ? Math.round((correct / allT) * 100) : 0;
+        dataStr = `${correct}/${allT} — ${indPct}% ind` + supAgg.map(([c2, b]) => {
+          const wPct = allT > 0 ? Math.round(((correct + (b.c || 0)) / allT) * 100) : 0;
+          return `; with ${c2} ${correct + (b.c || 0)}/${allT} — ${wPct}%`;
+        }).join("");
+      }
       if (g.type === "duration") {
         dataStr = (g.durations || []).length
           ? `longest ${formatTime(Math.max(...g.durations))} (${g.durations.length} stretch${g.durations.length === 1 ? "" : "es"})`
@@ -1460,7 +1533,7 @@ function App() {
           return g.type === "percent" ? `${it.name} ${it.correct || 0}/${t2}` : `${it.name} ${it.correct || 0}x`;
         }).join(", ");
       }
-      let line = `${label}${(g.usedSupport || "ind") !== "ind" ? ` (${g.usedSupport})` : ""} — ${dataStr}`;
+      let line = `${label} — ${dataStr}`;
       if (g.notes.trim()) line += `; ${g.notes.trim()}`;
       lines.push(line);
       lines.push("");
@@ -1506,9 +1579,12 @@ function App() {
             ? (g.durations || []).length > 0
             : (g.items || []).length > 0
               ? g.items.some(it => (it.correct || 0) + (it.incorrect || 0) > 0)
-              : (g.correct || 0) + (g.incorrect || 0) > 0))
+              : (g.correct || 0) + (g.incorrect || 0) + Object.values(g.sup || {}).reduce((s, b) => s + (b.c || 0) + (b.i || 0), 0) > 0))
           .map(g => {
-            const base = { tid: g.tid, label: g.label, type: g.type, correct: g.correct || 0, incorrect: g.incorrect || 0, support: g.usedSupport || "ind" };
+            const pc = Object.values(g.sup || {}).reduce((s, b) => s + (b.c || 0), 0);
+            const pi = Object.values(g.sup || {}).reduce((s, b) => s + (b.i || 0), 0);
+            const base = { tid: g.tid, label: g.label, type: g.type, correct: g.correct || 0, incorrect: (g.incorrect || 0) + pc + pi, support: g.support || "ind" };
+            if (pc + pi > 0) base.sup = g.sup;
             if (g.type === "duration" && (g.durations || []).length > 0) {
               base.duration = Math.max(...g.durations);
               base.correct = g.durations.length;

@@ -86,7 +86,7 @@
         addGoal(hg.tid, hg.label, hg.type);
         // keep latest label from history if template missing
         if (byTid[hg.tid] && !byTid[hg.tid].label && hg.label) byTid[hg.tid].label = hg.label;
-        byTid[hg.tid].points.push({ date: entry.date, correct: hg.correct || 0, incorrect: hg.incorrect || 0, items: hg.items, duration: hg.duration || 0, support: hg.support });
+        byTid[hg.tid].points.push({ date: entry.date, correct: hg.correct || 0, incorrect: hg.incorrect || 0, items: hg.items, duration: hg.duration || 0, support: hg.support, sup: hg.sup });
       });
     });
     var tplByTid = {};
@@ -145,6 +145,11 @@
           scoreTxt = dm + ":" + (ds < 10 ? "0" : "") + ds + " (" + p.correct + "x)";
         }
         if (p.support && p.support !== "ind") scoreTxt += " ·" + esc(p.support);
+        if (p.sup) {
+          var parts = [];
+          for (var k2 in p.sup) { var b2 = p.sup[k2]; var t3 = (b2.c || 0) + (b2.i || 0); if (t3 > 0) parts.push(esc(k2) + " " + (b2.c || 0) + "/" + t3); }
+          if (parts.length) scoreTxt += " [" + parts.join(", ") + "]";
+        }
         html += "<tr><td>" + fmtDate(p.date) + "</td><td>" + scoreTxt + "</td><td>" +
           (isPct ? (pct === null ? "—" : pct + "%") : p.correct) + "</td><td" + (met ? ' class="met">✓' : ">") + "</td></tr>";
       });
