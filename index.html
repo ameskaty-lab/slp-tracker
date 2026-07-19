@@ -333,7 +333,7 @@ function sessionHasData(sess) {
 }
 
 function defaultSession() {
-  return { goals: [newGoal(), newGoal()], reinforcers: "", startedAt: null };
+  return { goals: [newGoal(), newGoal()], reinforcers: "", parentNote: "", startedAt: null };
 }
 
 function ConfirmModal({ message, confirmLabel, confirmColor, onConfirm, onCancel }) {
@@ -451,8 +451,11 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
   const wrSup = goal.support || "ind";
   const offLevel = !isDur && !hasItems && selSup !== "ind" && selSup !== "sp" && selSup !== wrSup;
   const supTot = Object.values(goal.sup || {}).reduce((a, b) => ({ c: a.c + (b.c || 0), i: a.i + (b.i || 0) }), { c: 0, i: 0 });
-  const oppsCap = (goal.ruleMode === "opps" && !hasItems && typeof goal.targetOf === "number" && goal.targetOf > 0) ? goal.targetOf : null;
-  const sessionOpps = (goal.correct || 0) + (goal.incorrect || 0) + supTot.c + supTot.i;
+  const oppsCap = (goal.ruleMode === "opps" && typeof goal.targetOf === "number" && goal.targetOf > 0) ? goal.targetOf : null;
+  const capAi = hasItems ? Math.min(goal.activeItem || 0, goal.items.length - 1) : 0;
+  const sessionOpps = hasItems
+    ? (goal.items[capAi] ? (goal.items[capAi].correct || 0) + (goal.items[capAi].incorrect || 0) : 0)
+    : (goal.correct || 0) + (goal.incorrect || 0) + supTot.c + supTot.i;
   const capReached = oppsCap != null && sessionOpps >= oppsCap;
   const ai = hasItems ? Math.min(goal.activeItem || 0, goal.items.length - 1) : 0;
   const selBucket = offLevel ? ((goal.sup || {})[selSup] || { c: 0, i: 0 }) : null;
@@ -659,14 +662,15 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
             {goal.items.map((it, i) => {
               const t2 = (it.correct || 0) + (it.incorrect || 0);
               const lbl = goal.type === "percent" ? `${it.correct || 0}/${t2}` : `${it.correct || 0}x`;
+              const itemDone = oppsCap != null && t2 >= oppsCap;
               return (
                 <button key={i} onClick={() => update({ activeItem: i })} style={{
                   padding: "6px 12px", borderRadius: 999,
-                  border: `2px solid ${i === ai ? "#4f46e5" : "#e2e8f0"}`,
-                  background: i === ai ? "#ede9fe" : "#fff",
-                  color: i === ai ? "#3c3489" : "#64748b",
+                  border: `2px solid ${i === ai ? "#4f46e5" : itemDone ? "#86efac" : "#e2e8f0"}`,
+                  background: itemDone && i !== ai ? "#dcfce7" : i === ai ? "#ede9fe" : "#fff",
+                  color: itemDone && i !== ai ? "#16a34a" : i === ai ? "#3c3489" : "#64748b",
                   fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
-                }}>{it.name} · {lbl}</button>
+                }}>{it.name} · {lbl}{itemDone ? " ✓" : ""}</button>
               );
             })}
             <button onClick={() => setItemPrompt(true)} style={{
@@ -728,7 +732,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
           <div style={{
             background: "#dcfce7", border: "1.5px solid #86efac", borderRadius: 10,
             padding: "7px 10px", marginBottom: 8, fontSize: 12, fontWeight: 700, color: "#16a34a", textAlign: "center",
-          }}>✓ {oppsCap} trials done — stop here (Undo if you need to fix one)</div>
+          }}>✓ {hasItems ? `${cur.name}: ` : ""}{oppsCap} trials done — stop here (Undo to fix one)</div>
         )}
         <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
           {!isDur && <button onClick={capReached ? undefined : handlePlus} disabled={capReached} style={{
@@ -1262,7 +1266,7 @@ function loadStore() {
         const sessions = {};
         Object.keys(parsed.sessions).forEach(k => {
           const sess = parsed.sessions[k] || {};
-          sessions[k] = { goals: (sess.goals || []).map(normalizeGoalFields), reinforcers: sess.reinforcers || "", startedAt: sess.startedAt || null };
+          sessions[k] = { goals: (sess.goals || []).map(normalizeGoalFields), reinforcers: sess.reinforcers || "", parentNote: sess.parentNote || "", startedAt: sess.startedAt || null };
         });
         return { roster, selectedId: parsed.selectedId || "quick", sessions };
       }
@@ -1299,6 +1303,7 @@ function App() {
   const session = sessions[selectedId] || defaultSession();
   const goals = session.goals;
   const reinforcers = session.reinforcers;
+  const parentNote = session.parentNote || "";
   const selectedStudent = roster.find(s => s.id === selectedId) || null;
   const studentHistory = selectedStudent ? (selectedStudent.history || []) : [];
 
@@ -1344,6 +1349,7 @@ function App() {
     prev.goals.length < 10 ? { ...prev, goals: [...prev.goals, newGoal()] } : prev
   );
   const setReinforcers = (val) => setSession(prev => ({ ...prev, reinforcers: val }));
+  const setParentNote = (val) => setSession(prev => ({ ...prev, parentNote: val }));
 
   const selectStudent = (sid) => {
     setShowSummary(false);
@@ -1575,6 +1581,9 @@ function App() {
     if (reinforcers.trim()) {
       html += `<p><em>Reinforcers/Activities/Other: ${reinforcers.trim()}</em></p>`;
     }
+    if (parentNote.trim()) {
+      html += `<p><strong>Parent note:</strong> ${parentNote.trim()}</p>`;
+    }
     return html;
   };
 
@@ -1620,6 +1629,7 @@ function App() {
       lines.push("");
     });
     if (reinforcers.trim()) lines.push(`Reinforcers/Activities/Other: ${reinforcers.trim()}`);
+    if (parentNote.trim()) lines.push(`Parent note: ${parentNote.trim()}`);
     return lines.join("\n").trim();
   };
 
@@ -1691,7 +1701,7 @@ function App() {
       const goals = prev.selectedId === "quick"
         ? [newGoal(), newGoal()]
         : cur.goals.map(goalFromTemplate);
-      const sessions = { ...prev.sessions, [prev.selectedId]: { goals, reinforcers: "", startedAt: null } };
+      const sessions = { ...prev.sessions, [prev.selectedId]: { goals, reinforcers: "", parentNote: "", startedAt: null } };
       return { ...prev, roster, sessions };
     });
   };
@@ -1799,6 +1809,23 @@ function App() {
             }}
           />
         </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
+            Parent note
+          </div>
+          <textarea
+            value={parentNote}
+            onChange={e => setParentNote(e.target.value)}
+            placeholder="A note to share with the parent..."
+            rows={2}
+            style={{
+              width: "100%", borderRadius: 10, border: "1.5px solid #e2e8f0",
+              padding: "10px 12px", fontFamily: "inherit", fontSize: 14, color: "#334155",
+              resize: "vertical", outline: "none", background: "#fff", boxSizing: "border-box",
+            }}
+          />
+        </div>
       </div>
 
       {showSummary && (
@@ -1818,6 +1845,11 @@ function App() {
           {reinforcers.trim() && (
             <div style={{ borderTop: "1px solid #334155", paddingTop: 12, marginTop: 8, fontSize: 13, color: "#94a3b8" }}>
               <span style={{ fontWeight: 700, color: "#cbd5e1" }}>Reinforcers/Activities/Other:</span> {reinforcers.trim()}
+            </div>
+          )}
+          {parentNote.trim() && (
+            <div style={{ borderTop: "1px solid #334155", paddingTop: 12, marginTop: 8, fontSize: 13, color: "#94a3b8" }}>
+              <span style={{ fontWeight: 700, color: "#cbd5e1" }}>Parent note:</span> {parentNote.trim()}
             </div>
           )}
           <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
