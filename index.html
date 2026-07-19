@@ -323,8 +323,17 @@ function isAtCriteria(goal, pastPoints) {
   return points.slice(-n).every(p => pointPasses(p, goal.type, goal.target));
 }
 
+function sessionHasData(sess) {
+  return (sess.goals || []).some(g =>
+    (g.type === "duration" ? (g.durations || []).length > 0 : false)
+    || (g.items || []).some(it => (it.correct || 0) + (it.incorrect || 0) > 0)
+    || (g.correct || 0) + (g.incorrect || 0) > 0
+    || Object.values(g.sup || {}).reduce((s, b) => s + (b.c || 0) + (b.i || 0), 0) > 0
+  );
+}
+
 function defaultSession() {
-  return { goals: [newGoal(), newGoal()], reinforcers: "" };
+  return { goals: [newGoal(), newGoal()], reinforcers: "", startedAt: null };
 }
 
 function ConfirmModal({ message, confirmLabel, confirmColor, onConfirm, onCancel }) {
@@ -442,6 +451,9 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
   const wrSup = goal.support || "ind";
   const offLevel = !isDur && !hasItems && selSup !== "ind" && selSup !== "sp" && selSup !== wrSup;
   const supTot = Object.values(goal.sup || {}).reduce((a, b) => ({ c: a.c + (b.c || 0), i: a.i + (b.i || 0) }), { c: 0, i: 0 });
+  const oppsCap = (goal.ruleMode === "opps" && !hasItems && typeof goal.targetOf === "number" && goal.targetOf > 0) ? goal.targetOf : null;
+  const sessionOpps = (goal.correct || 0) + (goal.incorrect || 0) + supTot.c + supTot.i;
+  const capReached = oppsCap != null && sessionOpps >= oppsCap;
   const ai = hasItems ? Math.min(goal.activeItem || 0, goal.items.length - 1) : 0;
   const selBucket = offLevel ? ((goal.sup || {})[selSup] || { c: 0, i: 0 }) : null;
   const cur = hasItems ? goal.items[ai] : selBucket ? { correct: selBucket.c, incorrect: selBucket.i } : goal;
@@ -712,18 +724,24 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
             ))}
           </div>
         )}
+        {capReached && (
+          <div style={{
+            background: "#dcfce7", border: "1.5px solid #86efac", borderRadius: 10,
+            padding: "7px 10px", marginBottom: 8, fontSize: 12, fontWeight: 700, color: "#16a34a", textAlign: "center",
+          }}>✓ {oppsCap} trials done — stop here (Undo if you need to fix one)</div>
+        )}
         <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-          {!isDur && <button onClick={handlePlus} style={{
+          {!isDur && <button onClick={capReached ? undefined : handlePlus} disabled={capReached} style={{
             flex: goal.type === "percent" ? 1 : 2,
             padding: "14px 0", borderRadius: 12, border: "none",
-            background: "#22c55e", color: "#fff", fontSize: 24, fontWeight: 700,
-            cursor: "pointer", boxShadow: "0 3px 0 #16a34a",
+            background: capReached ? "#cbd5e1" : "#22c55e", color: "#fff", fontSize: 24, fontWeight: 700,
+            cursor: capReached ? "default" : "pointer", boxShadow: capReached ? "none" : "0 3px 0 #16a34a",
           }}>+</button>}
           {goal.type === "percent" && (
-            <button onClick={handleMinus} style={{
+            <button onClick={capReached ? undefined : handleMinus} disabled={capReached} style={{
               flex: 1, padding: "14px 0", borderRadius: 12, border: "none",
-              background: "#ef4444", color: "#fff", fontSize: 24, fontWeight: 700,
-              cursor: "pointer", boxShadow: "0 3px 0 #b91c1c",
+              background: capReached ? "#cbd5e1" : "#ef4444", color: "#fff", fontSize: 24, fontWeight: 700,
+              cursor: capReached ? "default" : "pointer", boxShadow: capReached ? "none" : "0 3px 0 #b91c1c",
             }}>−</button>
           )}
           <button onClick={handleUndo} style={{
@@ -1244,7 +1262,7 @@ function loadStore() {
         const sessions = {};
         Object.keys(parsed.sessions).forEach(k => {
           const sess = parsed.sessions[k] || {};
-          sessions[k] = { goals: (sess.goals || []).map(normalizeGoalFields), reinforcers: sess.reinforcers || "" };
+          sessions[k] = { goals: (sess.goals || []).map(normalizeGoalFields), reinforcers: sess.reinforcers || "", startedAt: sess.startedAt || null };
         });
         return { roster, selectedId: parsed.selectedId || "quick", sessions };
       }
@@ -1295,7 +1313,8 @@ function App() {
   const setSession = useCallback((updater) => {
     setStore(prev => {
       const cur = prev.sessions[prev.selectedId] || defaultSession();
-      const next = typeof updater === "function" ? updater(cur) : updater;
+      let next = typeof updater === "function" ? updater(cur) : updater;
+      if (!next.startedAt && sessionHasData(next)) next = { ...next, startedAt: new Date().toISOString() };
       const sessions = { ...prev.sessions, [prev.selectedId]: next };
       let roster = prev.roster;
       if (prev.selectedId !== "quick") {
@@ -1664,7 +1683,7 @@ function App() {
         roster = prev.roster.map(s => {
           if (s.id !== prev.selectedId) return s;
           const history = logged.length > 0
-            ? [...(s.history || []), { date: new Date().toISOString(), goals: logged }].slice(-40)
+            ? [...(s.history || []), { date: cur.startedAt || new Date().toISOString(), goals: logged }].slice(-40)
             : (s.history || []);
           return { ...s, history };
         });
@@ -1672,7 +1691,7 @@ function App() {
       const goals = prev.selectedId === "quick"
         ? [newGoal(), newGoal()]
         : cur.goals.map(goalFromTemplate);
-      const sessions = { ...prev.sessions, [prev.selectedId]: { goals, reinforcers: "" } };
+      const sessions = { ...prev.sessions, [prev.selectedId]: { goals, reinforcers: "", startedAt: null } };
       return { ...prev, roster, sessions };
     });
   };
