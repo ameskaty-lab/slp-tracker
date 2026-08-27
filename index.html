@@ -258,17 +258,16 @@ function itemPointsFor(history, tid, name) {
 function itemsSummary(g) {
   const items = (g.items || []).filter(it => (it.correct || 0) + (it.incorrect || 0) > 0 || it.att);
   if (items.length === 0) return g.type === "percent" ? "no trials" : "0x";
-  const sep = /across\s+(?:at least\s+)?\d+\s+(?:different\s+)?items/i.test(g.fullGoal || "");
   const tc = items.reduce((s, it) => s + (it.correct || 0), 0);
   const tt = items.reduce((s, it) => s + (it.correct || 0) + (it.incorrect || 0), 0);
   const total = g.type === "percent"
     ? `${tc}/${tt}${tt > 0 ? ` — ${Math.round((tc / tt) * 100)}%` : ""} total`
     : `${tc}x total`;
-  if (!sep) return total;
   const per = items.map(it => {
     const t2 = (it.correct || 0) + (it.incorrect || 0);
     return g.type === "percent" ? `${it.name} ${it.correct || 0}/${t2}` : `${it.name} ${it.correct || 0}x`;
   }).join(", ");
+  if (items.length === 1) return per;
   return `${per}; ${total}`;
 }
 
