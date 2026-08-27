@@ -154,6 +154,7 @@ function newGoal() {
     durations: [],
     notes: "",
     skipped: false,
+    done: false,
     support: "ind",
     usedSupport: "ind",
     sup: {},
@@ -186,7 +187,7 @@ function goalFromTemplate(t) {
     ruleN: typeof t.ruleN === "number" ? t.ruleN : 3,
     support: typeof t.support === "string" && t.support ? t.support : "ind",
     usedSupport: typeof t.support === "string" && t.support ? t.support : "ind",
-    items: (t.items || []).map(it => ({ name: typeof it === "string" ? it : String((it && it.name) || ""), correct: 0, incorrect: 0 })),
+    items: (t.items || []).map(it => ({ name: typeof it === "string" ? it : String((it && it.name) || ""), correct: 0, incorrect: 0, att: false })),
     activeItem: 0,
   };
 }
@@ -212,6 +213,7 @@ function normalizeGoalFields(g) {
     ...g,
     tid: g.tid || makeId("t"),
     skipped: !!g.skipped,
+    done: !!g.done,
     type: ["tally", "duration"].includes(g.type) ? g.type : "percent",
     durations: Array.isArray(g.durations) ? g.durations.filter(d => typeof d === "number") : [],
     support: typeof g.support === "string" && g.support ? g.support : "ind",
@@ -222,7 +224,7 @@ function normalizeGoalFields(g) {
     targetOf: typeof g.targetOf === "number" ? g.targetOf : null,
     ruleMode: ["total", "opps", "across"].includes(g.ruleMode) ? g.ruleMode : "row",
     ruleN: typeof g.ruleN === "number" ? g.ruleN : 3,
-    items: Array.isArray(g.items) ? g.items.map(it => ({ name: String((it && it.name) || (typeof it === "string" ? it : "")), correct: (it && it.correct) || 0, incorrect: (it && it.incorrect) || 0 })) : [],
+    items: Array.isArray(g.items) ? g.items.map(it => ({ name: String((it && it.name) || (typeof it === "string" ? it : "")), correct: (it && it.correct) || 0, incorrect: (it && it.incorrect) || 0, att: !!(it && it.att) })) : [],
     activeItem: typeof g.activeItem === "number" ? g.activeItem : 0,
   };
 }
@@ -251,6 +253,23 @@ function itemPointsFor(history, tid, name) {
     });
   });
   return pts;
+}
+
+function itemsSummary(g) {
+  const items = (g.items || []).filter(it => (it.correct || 0) + (it.incorrect || 0) > 0 || it.att);
+  if (items.length === 0) return g.type === "percent" ? "no trials" : "0x";
+  const sep = /across\s+(?:at least\s+)?\d+\s+(?:different\s+)?items/i.test(g.fullGoal || "");
+  const tc = items.reduce((s, it) => s + (it.correct || 0), 0);
+  const tt = items.reduce((s, it) => s + (it.correct || 0) + (it.incorrect || 0), 0);
+  const total = g.type === "percent"
+    ? `${tc}/${tt}${tt > 0 ? ` — ${Math.round((tc / tt) * 100)}%` : ""} total`
+    : `${tc}x total`;
+  if (!sep) return total;
+  const per = items.map(it => {
+    const t2 = (it.correct || 0) + (it.incorrect || 0);
+    return g.type === "percent" ? `${it.name} ${it.correct || 0}/${t2}` : `${it.name} ${it.correct || 0}x`;
+  }).join(", ");
+  return `${per}; ${total}`;
 }
 
 function goalAtCriteria(goal, history) {
@@ -456,7 +475,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
   const sessionOpps = hasItems
     ? (goal.items[capAi] ? (goal.items[capAi].correct || 0) + (goal.items[capAi].incorrect || 0) : 0)
     : (goal.correct || 0) + (goal.incorrect || 0) + supTot.c + supTot.i;
-  const capReached = oppsCap != null && sessionOpps >= oppsCap;
+  const capReached = (oppsCap != null && sessionOpps >= oppsCap) || !!goal.done;
   const ai = hasItems ? Math.min(goal.activeItem || 0, goal.items.length - 1) : 0;
   const selBucket = offLevel ? ((goal.sup || {})[selSup] || { c: 0, i: 0 }) : null;
   const cur = hasItems ? goal.items[ai] : selBucket ? { correct: selBucket.c, incorrect: selBucket.i } : goal;
@@ -545,6 +564,11 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
               background: "#4f46e5", color: "#fff", fontWeight: 700, fontSize: 14,
               cursor: "pointer", fontFamily: "inherit", marginBottom: 8,
             }}>Skip today — back next session</button>
+            <button onClick={() => { update({ done: true }); setConfirm(null); }} style={{
+              width: "100%", padding: "11px", borderRadius: 9, border: "none",
+              background: "#64748b", color: "#fff", fontWeight: 700, fontSize: 14,
+              cursor: "pointer", fontFamily: "inherit", marginBottom: 8,
+            }}>Done for today — keep data</button>
             <button onClick={() => { onRemove(goal.id); setConfirm(null); }} style={{
               width: "100%", padding: "11px", borderRadius: 9, border: "none",
               background: "#ef4444", color: "#fff", fontWeight: 700, fontSize: 14,
@@ -569,8 +593,8 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
         />
       )}
       <div style={{
-        background: timerAlert ? "#fff3cd" : "#ffffff",
-        border: `2px solid ${timerAlert ? "#f59e0b" : "#e2e8f0"}`,
+        background: goal.done ? "#f1f5f9" : timerAlert ? "#fff3cd" : "#ffffff",
+        border: `2px solid ${goal.done ? "#cbd5e1" : timerAlert ? "#f59e0b" : "#e2e8f0"}`,
         borderRadius: 16,
         padding: "16px",
         marginBottom: 12,
@@ -728,7 +752,14 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
             ))}
           </div>
         )}
-        {capReached && (
+        {goal.done && (
+          <div onClick={() => update({ done: false })} style={{
+            background: "#e2e8f0", border: "1.5px solid #cbd5e1", borderRadius: 10,
+            padding: "7px 10px", marginBottom: 8, fontSize: 12, fontWeight: 700,
+            color: "#475569", textAlign: "center", cursor: "pointer",
+          }}>✓ Done for today — data still logs · tap to reopen</div>
+        )}
+        {capReached && !goal.done && (
           <div style={{
             background: "#dcfce7", border: "1.5px solid #86efac", borderRadius: 10,
             padding: "7px 10px", marginBottom: 8, fontSize: 12, fontWeight: 700, color: "#16a34a", textAlign: "center",
@@ -753,6 +784,18 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
             background: "#f8fafc", color: "#64748b", fontSize: 12, fontWeight: 700, cursor: "pointer",
             fontFamily: "inherit",
           }}>↩ Undo</button>
+          {hasItems && !isDur && (
+            <button onClick={() => onUpdate(goal.id, (prev) => {
+              const idx = Math.min(prev.activeItem || 0, (prev.items || []).length - 1);
+              return { ...prev, items: (prev.items || []).map((it, i) => (i === idx ? { ...it, att: !it.att } : it)) };
+            })} title="Log this item as worked on, even with no correct responses" style={{
+              padding: "14px 10px", borderRadius: 12,
+              border: `2px solid ${cur.att ? "#4f46e5" : "#e2e8f0"}`,
+              background: cur.att ? "#ede9fe" : "#f8fafc",
+              color: cur.att ? "#4f46e5" : "#64748b",
+              fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+            }}>0</button>
+          )}
           <button onClick={() => setConfirm("tally")} title="Reset all data for this goal" style={{
             padding: "14px 12px", borderRadius: 12, border: "2px solid #fecaca",
             background: "#fff5f5", color: "#ef4444", fontSize: 16, fontWeight: 700, cursor: "pointer",
@@ -1025,10 +1068,7 @@ function SummaryLine({ goal, index }) {
       : "no stretches";
   }
   if ((goal.items || []).length > 0) {
-    dataStr = goal.items.map(it => {
-      const t2 = (it.correct || 0) + (it.incorrect || 0);
-      return goal.type === "percent" ? `${it.name} ${it.correct || 0}/${t2}` : `${it.name} ${it.correct || 0}x`;
-    }).join(", ");
+    dataStr = itemsSummary(goal);
   }
 
   return (
@@ -1350,6 +1390,10 @@ function App() {
   );
   const setReinforcers = (val) => setSession(prev => ({ ...prev, reinforcers: val }));
   const setParentNote = (val) => setSession(prev => ({ ...prev, parentNote: val }));
+  const setStudentNotes = (val) => setStore(prev => ({
+    ...prev,
+    roster: prev.roster.map(s => (s.id === prev.selectedId ? { ...s, notes: val } : s)),
+  }));
 
   const selectStudent = (sid) => {
     setShowSummary(false);
@@ -1569,10 +1613,7 @@ function App() {
           : "no stretches";
       }
       if ((g.items || []).length > 0) {
-        dataStr = g.items.map(it => {
-          const t2 = (it.correct || 0) + (it.incorrect || 0);
-          return g.type === "percent" ? `${it.name} ${it.correct || 0}/${t2}` : `${it.name} ${it.correct || 0}x`;
-        }).join(", ");
+        dataStr = itemsSummary(g);
       }
       let line = `${label} — ${dataStr}`;
       if (g.notes.trim()) line += `; ${g.notes.trim()}`;
@@ -1618,10 +1659,7 @@ function App() {
           : "no stretches";
       }
       if ((g.items || []).length > 0) {
-        dataStr = g.items.map(it => {
-          const t2 = (it.correct || 0) + (it.incorrect || 0);
-          return g.type === "percent" ? `${it.name} ${it.correct || 0}/${t2}` : `${it.name} ${it.correct || 0}x`;
-        }).join(", ");
+        dataStr = itemsSummary(g);
       }
       let line = `${label} — ${dataStr}`;
       if (g.notes.trim()) line += `; ${g.notes.trim()}`;
@@ -1669,7 +1707,7 @@ function App() {
           .filter(g => !g.skipped && (g.type === "duration"
             ? (g.durations || []).length > 0
             : (g.items || []).length > 0
-              ? g.items.some(it => (it.correct || 0) + (it.incorrect || 0) > 0)
+              ? g.items.some(it => (it.correct || 0) + (it.incorrect || 0) > 0 || it.att)
               : (g.correct || 0) + (g.incorrect || 0) + Object.values(g.sup || {}).reduce((s, b) => s + (b.c || 0) + (b.i || 0), 0) > 0))
           .map(g => {
             const pc = Object.values(g.sup || {}).reduce((s, b) => s + (b.c || 0), 0);
@@ -1682,7 +1720,7 @@ function App() {
             }
             if ((g.items || []).length > 0) {
               const its = g.items
-                .filter(it => (it.correct || 0) + (it.incorrect || 0) > 0)
+                .filter(it => (it.correct || 0) + (it.incorrect || 0) > 0 || it.att)
                 .map(it => ({ name: it.name, correct: it.correct || 0, incorrect: it.incorrect || 0 }));
               base.items = its;
               base.correct = its.reduce((s, it) => s + it.correct, 0);
@@ -1695,7 +1733,7 @@ function App() {
           const history = logged.length > 0
             ? [...(s.history || []), { date: cur.startedAt || new Date().toISOString(), goals: logged }].slice(-40)
             : (s.history || []);
-          return { ...s, history };
+          return { ...s, history, lastParentNote: (cur.parentNote || "").trim() || s.lastParentNote || "" };
         });
       }
       const goals = prev.selectedId === "quick"
@@ -1825,7 +1863,33 @@ function App() {
               resize: "vertical", outline: "none", background: "#fff", boxSizing: "border-box",
             }}
           />
+          {selectedStudent && selectedStudent.lastParentNote && !parentNote.trim() && (
+            <button onClick={() => setParentNote(selectedStudent.lastParentNote)} style={{
+              width: "100%", textAlign: "left", marginTop: 6, padding: "7px 10px", borderRadius: 8,
+              border: "1.5px solid #e2e8f0", background: "#f8fafc", color: "#64748b",
+              fontSize: 11, cursor: "pointer", fontFamily: "inherit", lineHeight: 1.4,
+            }}>↩ Last time: {selectedStudent.lastParentNote.slice(0, 70)}{selectedStudent.lastParentNote.length > 70 ? "…" : ""}</button>
+          )}
         </div>
+
+        {selectedStudent && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
+              Notes &amp; links — stays until you clear it
+            </div>
+            <textarea
+              value={selectedStudent.notes || ""}
+              onChange={e => setStudentNotes(e.target.value)}
+              placeholder="Materials, links, reminders for next time..."
+              rows={2}
+              style={{
+                width: "100%", borderRadius: 10, border: "1.5px dashed #c7d2fe",
+                padding: "10px 12px", fontFamily: "inherit", fontSize: 13, color: "#334155",
+                resize: "vertical", outline: "none", background: "#fbfaff", boxSizing: "border-box",
+              }}
+            />
+          </div>
+        )}
       </div>
 
       {showSummary && (
