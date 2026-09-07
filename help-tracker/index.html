@@ -1,0 +1,1263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>HELP Tracker</title>
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="HELP Tracker" />
+<meta name="theme-color" content="#4f46e5" />
+<style>
+  :root{
+    --bg:#f8fafc; --card:#ffffff; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0;
+    --brand:#4f46e5; --brand-soft:#eef2ff;
+    --notyet:#dc2626; --notyet-bg:#fef2f2;
+    --emerging:#d97706; --emerging-bg:#fffbeb;
+    --mastered:#059669; --mastered-bg:#ecfdf5;
+    --radius:12px;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--ink);
+    font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;
+    padding-bottom:env(safe-area-inset-bottom);
+  }
+  button{font:inherit;cursor:pointer;-webkit-appearance:none;touch-action:manipulation}
+  input,textarea,select{font:inherit;-webkit-appearance:none}
+
+  header{
+    position:sticky;top:0;z-index:20;background:var(--brand);color:#fff;
+    padding:calc(10px + env(safe-area-inset-top)) 14px 10px;
+  }
+  .h-row{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  h1{margin:0;font-size:17px;font-weight:650;letter-spacing:.2px}
+  .agechip{
+    background:rgba(255,255,255,.18);border:0;color:#fff;
+    padding:3px 10px;border-radius:999px;font-size:12.5px;font-weight:600;
+  }
+  nav{display:flex;gap:6px;margin-top:10px}
+  nav button{
+    flex:1;background:rgba(255,255,255,.14);border:0;color:#fff;
+    padding:8px 4px;border-radius:9px;font-size:13.5px;font-weight:600;opacity:.75;
+  }
+  nav button[aria-current="true"]{background:#fff;color:var(--brand);opacity:1}
+
+  main{padding:14px 12px 40px;max-width:760px;margin:0 auto}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px;margin-bottom:12px}
+  .card h2{margin:0 0 4px;font-size:15px;font-weight:650}
+  .card p.sub{margin:0 0 10px;color:var(--muted);font-size:13px}
+  .muted{color:var(--muted)}
+  .small{font-size:12.5px}
+
+  label.field{display:block;margin:10px 0 0}
+  label.field span{display:block;font-size:12.5px;font-weight:600;color:var(--muted);margin-bottom:4px}
+  input[type=date],input[type=text],input[type=number],textarea,select{
+    width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--ink)
+  }
+  textarea{resize:vertical;min-height:64px}
+
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+  .stat{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:9px 8px;text-align:center}
+  .stat b{display:block;font-size:19px;line-height:1.2}
+  .stat span{font-size:11px;color:var(--muted);letter-spacing:.2px}
+
+  .bar{height:7px;background:var(--line);border-radius:99px;overflow:hidden;margin-top:7px}
+  .bar i{display:block;height:100%;background:var(--mastered)}
+
+  .filters{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+  .chip{
+    background:#fff;border:1px solid var(--line);color:var(--ink);
+    padding:6px 11px;border-radius:999px;font-size:13px;font-weight:550
+  }
+  .chip[aria-pressed="true"]{background:var(--brand);border-color:var(--brand);color:#fff}
+
+  ul.items{list-style:none;margin:0;padding:0}
+  li.item{border:1px solid var(--line);border-radius:var(--radius);background:#fff;margin-bottom:8px;overflow:hidden}
+  .item-head{display:flex;gap:10px;align-items:flex-start;padding:11px 12px;width:100%;text-align:left;background:none;border:0;color:inherit}
+  .dot{flex:0 0 auto;width:11px;height:11px;border-radius:50%;margin-top:5px;background:var(--line);border:1px solid #cbd5e1}
+  .dot.notyet{background:var(--notyet);border-color:var(--notyet)}
+  .dot.emerging{background:var(--emerging);border-color:var(--emerging)}
+  .dot.mastered{background:var(--mastered);border-color:var(--mastered)}
+  .item-main{flex:1;min-width:0}
+  .item-skill{font-size:14.5px}
+  .item-meta{margin-top:3px;font-size:12px;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap}
+  .tag{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-size:11.5px}
+  .tag.warn{background:#fff7ed;border-color:#fed7aa;color:#9a3412}
+  .tag.book{background:var(--brand-soft);border-color:#c7d2fe;color:#3730a3}
+
+  .item-body{padding:0 12px 12px;border-top:1px solid var(--line);display:none}
+  li.item.open .item-body{display:block}
+  .statusrow{display:flex;gap:6px;margin:12px 0 4px;flex-wrap:wrap}
+  .statusrow button{
+    flex:1 1 0;min-width:82px;padding:9px 6px;border-radius:9px;border:1px solid var(--line);
+    background:#fff;font-size:13px;font-weight:600;color:var(--muted)
+  }
+  .statusrow button[aria-pressed="true"].notyet{background:var(--notyet-bg);border-color:var(--notyet);color:var(--notyet)}
+  .statusrow button[aria-pressed="true"].emerging{background:var(--emerging-bg);border-color:var(--emerging);color:var(--emerging)}
+  .statusrow button[aria-pressed="true"].mastered{background:var(--mastered-bg);border-color:var(--mastered);color:var(--mastered)}
+
+  .ideas{list-style:none;margin:6px 0 0;padding:0}
+  .ideas li{display:flex;gap:8px;align-items:flex-start;background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:8px 10px;margin-bottom:6px;font-size:13.5px}
+  .ideas li span{flex:1}
+  .ideas li button{background:none;border:0;color:var(--muted);font-size:16px;line-height:1;padding:0 2px}
+  .addrow{display:flex;gap:6px;margin-top:6px}
+  .addrow input{flex:1}
+  .btn{background:var(--brand);border:1px solid var(--brand);color:#fff;padding:9px 14px;border-radius:9px;font-weight:600;font-size:13.5px}
+  .btn.ghost{background:#fff;color:var(--brand)}
+  .btn.wide{width:100%;margin-top:8px}
+
+  .empty{text-align:center;color:var(--muted);padding:26px 10px;font-size:13.5px}
+  details.foot{margin-top:10px}
+  details.foot summary{font-size:13px;color:var(--muted);cursor:pointer}
+  details.foot div{margin-top:8px}
+  .legend dt{font-weight:650;margin-top:8px;font-size:13.5px}
+  .legend dd{margin:2px 0 0;color:var(--muted);font-size:13px}
+  .note{background:var(--brand-soft);border:1px solid #c7d2fe;border-radius:10px;padding:10px 12px;font-size:13px;color:#3730a3}
+  .sectionlabel{font-size:12px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);margin:16px 0 7px}
+  .sectionlabel:first-child{margin-top:0}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="h-row">
+    <h1>HELP Tracker</h1>
+    <button class="agechip" id="agechip" type="button">Set age</button>
+  </div>
+  <nav>
+    <button type="button" data-tab="focus" aria-current="true">Focus</button>
+    <button type="button" data-tab="skills">Skills</button>
+    <button type="button" data-tab="setup">Setup</button>
+  </nav>
+</header>
+
+<main>
+  <section id="view-focus"></section>
+  <section id="view-skills" hidden></section>
+  <section id="view-setup" hidden></section>
+</main>
+
+<script>
+/* ---------------------------------------------------------------
+   HELP Checklist item data.
+   Transcribed from: HELP Checklist (Hawaii Early Learning Profile),
+   Ages Birth to Three years, VORT Corporation, 1984/1988.
+   Fields: id, a=area, age=printed age range (mo.), lo/hi=parsed bounds,
+           s=skill text, h=HELP...at Home page, f=footnote number.
+   --------------------------------------------------------------- */
+const ITEMS = [
+{"id":"1.01","a":1,"age":"0-1","lo":0.0,"hi":1.0,"s":"Quiets when picked up","h":"1"},
+{"id":"1.02","a":1,"age":"0-6","lo":0.0,"hi":6.0,"s":"Shows pleasure when touched and handled","h":"373"},
+{"id":"1.03","a":1,"age":"0-1","lo":0.0,"hi":1.0,"s":"Responds to sounds","h":"2"},
+{"id":"1.04","a":1,"age":"0-2½","lo":0.0,"hi":2.5,"s":"Responds to voice","h":"4"},
+{"id":"1.05","a":1,"age":"1-2","lo":1.0,"hi":2.0,"s":"Inspects surroundings","h":"6"},
+{"id":"1.06","a":1,"age":"1-6","lo":1.0,"hi":6.0,"s":"Shows active interest in person or object for at least 1 minute","h":"7"},
+{"id":"1.07","a":1,"age":"1-3","lo":1.0,"hi":3.0,"s":"Listens to voice for 30 seconds","h":"4"},
+{"id":"1.08","a":1,"age":"1½-4","lo":1.5,"hi":4.0,"s":"Shows anticipatory excitement","h":"8"},
+{"id":"1.09","a":1,"age":"2-3","lo":2.0,"hi":3.0,"s":"Reacts to disappearance of slowly moving object","h":"10"},
+{"id":"1.10","a":1,"age":"2-3½","lo":2.0,"hi":3.5,"s":"Searches with eyes for sound","h":"2"},
+{"id":"1.11","a":1,"age":"2-3","lo":2.0,"hi":3.0,"s":"Inspects own hands","h":"12"},
+{"id":"1.12","a":1,"age":"2-3","lo":2.0,"hi":3.0,"s":"Watches speaker's eyes and mouth","h":"13"},
+{"id":"1.13","a":1,"age":"2½-4","lo":2.5,"hi":4.0,"s":"Begins play with rattle","h":"14"},
+{"id":"1.14","a":1,"age":"3-4","lo":3.0,"hi":4.0,"s":"Enjoys repeating newly learned activity","h":"15"},
+{"id":"1.15","a":1,"age":"3-6","lo":3.0,"hi":6.0,"s":"Uses hands and mouth for sensory exploration of objects","h":"16"},
+{"id":"1.16","a":1,"age":"3-7","lo":3.0,"hi":7.0,"s":"Turns eyes and head to sound of hidden voice","h":"17"},
+{"id":"1.17","a":1,"age":"3-5","lo":3.0,"hi":5.0,"s":"Plays with own hands, feet, fingers, toes","h":"18"},
+{"id":"1.18","a":1,"age":"3-6","lo":3.0,"hi":6.0,"s":"Awakens or quiets to mother's voice","h":"20"},
+{"id":"1.19","a":1,"age":"3½-5","lo":3.5,"hi":5.0,"s":"Localizes sound with eyes","h":"21"},
+{"id":"1.20","a":1,"age":"4-6","lo":4.0,"hi":6.0,"s":"Finds a partially hidden object","h":"22"},
+{"id":"1.21","a":1,"age":"4-5","lo":4.0,"hi":5.0,"s":"Continues a familiar activity by initiating movements involved","h":"24"},
+{"id":"1.22","a":1,"age":"4-6","lo":4.0,"hi":6.0,"s":"Localizes tactile stimulation by touching the same spot or searching for object that touched body","h":"25"},
+{"id":"1.23","a":1,"age":"4½-7","lo":4.5,"hi":7.0,"s":"Plays with paper","h":"26"},
+{"id":"1.24","a":1,"age":"5-9","lo":5.0,"hi":9.0,"s":"Touches toy or adult's hand to restart an activity","h":"27"},
+{"id":"1.25","a":1,"age":"5-6½","lo":5.0,"hi":6.5,"s":"Reaches for second object purposefully","h":"28"},
+{"id":"1.26","a":1,"age":"5-9","lo":5.0,"hi":9.0,"s":"Works for desired, out of reach object","h":"29"},
+{"id":"1.27","a":1,"age":"5-6½","lo":5.0,"hi":6.5,"s":"Distinguishes between friendly and angry voices","h":"30"},
+{"id":"1.28","a":1,"age":"5-6","lo":5.0,"hi":6.0,"s":"Hand regard no longer present","h":"31","f":2},
+{"id":"1.29","a":1,"age":"5-6","lo":5.0,"hi":6.0,"s":"Brings feet to mouth","h":"32"},
+{"id":"1.30","a":1,"age":"5½-8","lo":5.5,"hi":8.0,"s":"Shows interest in sounds of objects","h":"33"},
+{"id":"1.31","a":1,"age":"5½-7½","lo":5.5,"hi":7.5,"s":"Anticipates visually the trajectory of a slowly moving object","h":"34"},
+{"id":"1.32","a":1,"age":"6-9","lo":6.0,"hi":9.0,"s":"Finds hidden object using 1 screen, 2 screens, then 3 screens","h":"35"},
+{"id":"1.33","a":1,"age":"6-10","lo":6.0,"hi":10.0,"s":"Plays \"Peek-a-boo\"","h":"37"},
+{"id":"1.34","a":1,"age":"6-12","lo":6.0,"hi":12.0,"s":"Smells different things","h":"38"},
+{"id":"1.35","a":1,"age":"6-9","lo":6.0,"hi":9.0,"s":"Plays 2-3 minutes with single toy","h":"39"},
+{"id":"1.36","a":1,"age":"6-11","lo":6.0,"hi":11.0,"s":"Slides toy or object on surface","h":"40"},
+{"id":"1.37","a":1,"age":"6-8","lo":6.0,"hi":8.0,"s":"Follows trajectory of fast moving object","h":"41"},
+{"id":"1.38","a":1,"age":"6-8","lo":6.0,"hi":8.0,"s":"Looks for family members or pets when named","h":"42"},
+{"id":"1.39","a":1,"age":"6-7","lo":6.0,"hi":7.0,"s":"Responds to facial expressions","h":"43"},
+{"id":"1.40","a":1,"age":"6½-7½","lo":6.5,"hi":7.5,"s":"Retains two of three objects offered","h":"44"},
+{"id":"1.41","a":1,"age":"7-10","lo":7.0,"hi":10.0,"s":"Turns head and shoulders to find hidden sound","h":"45"},
+{"id":"1.42","a":1,"age":"7-11","lo":7.0,"hi":11.0,"s":"Imitates familiar, then new gesture","h":"46"},
+{"id":"1.43","a":1,"age":"7-9","lo":7.0,"hi":9.0,"s":"Responds to simple requests with gestures","h":"47"},
+{"id":"1.44","a":1,"age":"8-9","lo":8.0,"hi":9.0,"s":"Looks at pictures one minute when named","h":"48"},
+{"id":"1.45","a":1,"age":"?-10","lo":null,"hi":10.0,"s":"Retains two and reaches for third object","h":"44"},
+{"id":"1.46","a":1,"age":"?-11","lo":null,"hi":11.0,"s":"Overcomes obstacle to obtain object","h":"49"},
+{"id":"1.47","a":1,"age":"8-10","lo":8.0,"hi":10.0,"s":"Retrieves object using other material","h":"50"},
+{"id":"1.48","a":1,"age":"8-12","lo":8.0,"hi":12.0,"s":"Listens selectively to familiar words","h":"51"},
+{"id":"1.49","a":1,"age":"9-10","lo":9.0,"hi":10.0,"s":"Finds hidden object under three superimposed screens","h":"52"},
+{"id":"1.50","a":1,"age":"9-12","lo":9.0,"hi":12.0,"s":"Guides action on toy manually","h":"53"},
+{"id":"1.51","a":1,"age":"9-12","lo":9.0,"hi":12.0,"s":"Throws objects","h":"?"},
+{"id":"1.52","a":1,"age":"9-12","lo":9.0,"hi":12.0,"s":"Drops objects systematically","h":"54"},
+{"id":"1.53","a":1,"age":"9-12","lo":9.0,"hi":12.0,"s":"Uses locomotion to regain object and resumes play","h":"55"},
+{"id":"1.54","a":1,"age":"9-11","lo":9.0,"hi":11.0,"s":"Listens to speech without being distracted by other sources","h":"56"},
+{"id":"1.55","a":1,"age":"9-12","lo":9.0,"hi":12.0,"s":"Knows what \"no-no\" means and reacts","h":"57"},
+{"id":"1.56","a":1,"age":"9-14","lo":9.0,"hi":14.0,"s":"Responds to simple verbal requests","h":"58"},
+{"id":"1.57","a":1,"age":"10-11","lo":10.0,"hi":11.0,"s":"Removes round piece from formboard","h":"59"},
+{"id":"1.58","a":1,"age":"10-11","lo":10.0,"hi":11.0,"s":"Takes ring stack apart","h":"60"},
+{"id":"1.59","a":1,"age":"10-15","lo":10.0,"hi":15.0,"s":"Demonstrates drinking from a cup","h":"61"},
+{"id":"1.60","a":1,"age":"10-14","lo":10.0,"hi":14.0,"s":"Enjoys looking at pictures in books","h":"48"},
+{"id":"1.61","a":1,"age":"10½-12","lo":10.5,"hi":12.0,"s":"Unwraps a toy","h":"62"},
+{"id":"1.62","a":1,"age":"11-13","lo":11.0,"hi":13.0,"s":"Hidden displacement one screen","h":"63"},
+{"id":"1.63","a":1,"age":"11-12","lo":11.0,"hi":12.0,"s":"Places cylinders in matching hole in container","h":"65"},
+{"id":"1.64","a":1,"age":"11-12","lo":11.0,"hi":12.0,"s":"Stacks rings","h":"60"},
+{"id":"1.65","a":1,"age":"11-12","lo":11.0,"hi":12.0,"s":"Moves to rhythms","h":"66"},
+{"id":"1.66","a":1,"age":"11-14","lo":11.0,"hi":14.0,"s":"Imitates several new gestures","h":"67"},
+{"id":"1.67","a":1,"age":"12-15","lo":12.0,"hi":15.0,"s":"Hands toy back to adult","h":"68"},
+{"id":"1.68","a":1,"age":"12-18","lo":12.0,"hi":18.0,"s":"Enjoys messy activities such as fingerpainting","h":"69"},
+{"id":"1.69","a":1,"age":"12-18","lo":12.0,"hi":18.0,"s":"Reacts to various sensations such as extremes in temperature and taste","h":"n/a"},
+{"id":"1.70","a":1,"age":"12-18","lo":12.0,"hi":18.0,"s":"Shows understanding of color and size","h":"70"},
+{"id":"1.71","a":1,"age":"12-15","lo":12.0,"hi":15.0,"s":"Places round piece in formboard","h":"59"},
+{"id":"1.72","a":1,"age":"12-19","lo":12.0,"hi":19.0,"s":"Nests two then three cans","h":"71"},
+{"id":"1.73","a":1,"age":"12-14","lo":12.0,"hi":14.0,"s":"Understands pointing","h":"72"},
+{"id":"1.74","a":1,"age":"12-13","lo":12.0,"hi":13.0,"s":"Pulls string horizontally to obtain toy","h":"74"},
+{"id":"1.75","a":1,"age":"12-18","lo":12.0,"hi":18.0,"s":"Makes detours to retrieve objects","h":"75"},
+{"id":"1.76","a":1,"age":"12-13","lo":12.0,"hi":13.0,"s":"Looks at place where ball rolls out of sight","h":"n/a"},
+{"id":"1.77","a":1,"age":"12-18","lo":12.0,"hi":18.0,"s":"Recognizes several people in addition to immediate family","h":"72"},
+{"id":"1.78","a":1,"age":"13-14","lo":13.0,"hi":14.0,"s":"Hidden displacement two screens","h":"64"},
+{"id":"1.79","a":1,"age":"13-15","lo":13.0,"hi":15.0,"s":"Pulls string vertically to obtain toy","h":"76"},
+{"id":"1.80","a":1,"age":"14-15","lo":14.0,"hi":15.0,"s":"Hidden displacement three screens","h":"64"},
+{"id":"1.81","a":1,"age":"14-15","lo":14.0,"hi":15.0,"s":"Hidden displacement two screens alternately","h":"64"},
+{"id":"1.82","a":1,"age":"14-15","lo":14.0,"hi":15.0,"s":"Pats picture","h":"77"},
+{"id":"1.83","a":1,"age":"14-15","lo":14.0,"hi":15.0,"s":"Helps turn pages","h":"77"},
+{"id":"1.84","a":1,"age":"14-17","lo":14.0,"hi":17.0,"s":"Imitates \"invisible\" gesture","h":"78"},
+{"id":"1.85","a":1,"age":"15-19","lo":15.0,"hi":19.0,"s":"Matches objects","h":"79"},
+{"id":"1.86","a":1,"age":"15-21","lo":15.0,"hi":21.0,"s":"Places square piece in formboard","h":"80"},
+{"id":"1.87","a":1,"age":"15-18","lo":15.0,"hi":18.0,"s":"Indicates two objects from group of familiar objects","h":"81"},
+{"id":"1.88","a":1,"age":"15-18","lo":15.0,"hi":18.0,"s":"Brings objects from another room on request","h":"82"},
+{"id":"1.89","a":1,"age":"15-18","lo":15.0,"hi":18.0,"s":"Turns two or three pages at a time","h":"83"},
+{"id":"1.90","a":1,"age":"15-16","lo":15.0,"hi":16.0,"s":"Identifies self in mirror","h":"84"},
+{"id":"1.91","a":1,"age":"15-19","lo":15.0,"hi":19.0,"s":"Identifies one body part","h":"85"},
+{"id":"1.92","a":1,"age":"16-21","lo":16.0,"hi":21.0,"s":"Recognizes and points to four animal pictures","h":"86"},
+{"id":"1.93","a":1,"age":"16-19","lo":16.0,"hi":19.0,"s":"Understands most noun objects","h":"87"},
+{"id":"1.94","a":1,"age":"17-18","lo":17.0,"hi":18.0,"s":"Series of hidden displacements; object under last screen","h":"n/a"},
+{"id":"1.95","a":1,"age":"17-24","lo":17.0,"hi":24.0,"s":"Solves simple problems using tools","h":"88"},
+{"id":"1.96","a":1,"age":"17-20","lo":17.0,"hi":20.0,"s":"Imitates several \"invisible\" gestures","h":"78"},
+{"id":"1.97","a":1,"age":"17½-18½","lo":17.5,"hi":18.5,"s":"Points to distant objects outdoors","h":"87"},
+{"id":"1.98","a":1,"age":"18-22","lo":18.0,"hi":22.0,"s":"Attempts and then succeeds in activating mechanical toy","h":"89"},
+{"id":"1.99","a":1,"age":"18-24","lo":18.0,"hi":24.0,"s":"Uses playdough and paints","h":"90"},
+{"id":"1.100","a":1,"age":"18-24","lo":18.0,"hi":24.0,"s":"Pastes on one side","h":"91"},
+{"id":"1.101","a":1,"age":"18-24","lo":18.0,"hi":24.0,"s":"Paints within limits of paper","h":"92"},
+{"id":"1.102","a":1,"age":"18-20","lo":18.0,"hi":20.0,"s":"Points to several clothing items on request","h":"87"},
+{"id":"1.103","a":1,"age":"18-24","lo":18.0,"hi":24.0,"s":"Explores cabinets and drawers","h":"426"},
+{"id":"1.104","a":1,"age":"18-22","lo":18.0,"hi":22.0,"s":"Matches sound to animals","h":"86"},
+{"id":"1.105","a":1,"age":"18-24","lo":18.0,"hi":24.0,"s":"Rights familiar picture","h":"93"},
+{"id":"1.106","a":1,"age":"18-30","lo":18.0,"hi":30.0,"s":"Enjoys nursery rhymes, nonsense rhymes, fingerplays, poetry","h":"94"},
+{"id":"1.107","a":1,"age":"19-27","lo":19.0,"hi":27.0,"s":"Matches objects to picture","h":"95"},
+{"id":"1.108","a":1,"age":"19-24","lo":19.0,"hi":24.0,"s":"Sorts objects","h":"96"},
+{"id":"1.109","a":1,"age":"19-24","lo":19.0,"hi":24.0,"s":"Assembles four nesting blocks","h":"97"},
+{"id":"1.110","a":1,"age":"19-24","lo":19.0,"hi":24.0,"s":"Recognizes self in photograph","h":"98"},
+{"id":"1.111","a":1,"age":"19-22","lo":19.0,"hi":22.0,"s":"Identifies three body parts","h":"85"},
+{"id":"1.112","a":1,"age":"20-24","lo":20.0,"hi":24.0,"s":"Understands personal pronouns, some action verbs and adjectives","h":"99"},
+{"id":"1.113","a":1,"age":"21-22","lo":21.0,"hi":22.0,"s":"Series of hidden displacements; object under first screen","h":"n/a"},
+{"id":"1.114","a":1,"age":"21-24","lo":21.0,"hi":24.0,"s":"Places triangular piece in formboard","h":"100"},
+{"id":"1.115","a":1,"age":"21-24","lo":21.0,"hi":24.0,"s":"Remembers where objects belong","h":"101"},
+{"id":"1.116","a":1,"age":"21-24","lo":21.0,"hi":24.0,"s":"Turns pages one at a time","h":"102"},
+{"id":"1.117","a":1,"age":"21-30","lo":21.0,"hi":30.0,"s":"Points to five-seven pictures of familiar objects and people","h":"176"},
+{"id":"1.118","a":1,"age":"22-24","lo":22.0,"hi":24.0,"s":"Matches sounds to pictures of animals","h":"86"},
+{"id":"1.119","a":1,"age":"22-24","lo":22.0,"hi":24.0,"s":"Identifies six body parts","h":"103"},
+{"id":"1.120","a":1,"age":"24-36","lo":24.0,"hi":36.0,"s":"Plays with water and sand","h":"104"},
+{"id":"1.121","a":1,"age":"24-30","lo":24.0,"hi":30.0,"s":"Pastes on appropriate side","h":"91"},
+{"id":"1.122","a":1,"age":"24-27","lo":24.0,"hi":27.0,"s":"Demonstrates awareness of class routines","h":"105"},
+{"id":"1.123","a":1,"age":"24-30","lo":24.0,"hi":30.0,"s":"Understands concept of one","h":"106"},
+{"id":"1.124","a":1,"age":"24-28","lo":24.0,"hi":28.0,"s":"Identifies rooms in own house","h":"107"},
+{"id":"1.125","a":1,"age":"24-28","lo":24.0,"hi":28.0,"s":"Demonstrates use of objects","h":"108"},
+{"id":"1.126","a":1,"age":"24-28","lo":24.0,"hi":28.0,"s":"Identifies clothing items for different occasions","h":"109"},
+{"id":"1.127","a":1,"age":"24-29","lo":24.0,"hi":29.0,"s":"Enjoys tactile books","h":"110"},
+{"id":"1.128","a":1,"age":"24-27","lo":24.0,"hi":27.0,"s":"Finds detail in favorite picture book","h":"111"},
+{"id":"1.129","a":1,"age":"24-28","lo":24.0,"hi":28.0,"s":"Recognizes familiar adult in photograph","h":"98"},
+{"id":"1.130","a":1,"age":"24-30","lo":24.0,"hi":30.0,"s":"Engages in simple make-believe activities","h":"112"},
+{"id":"1.131","a":1,"age":"24-28","lo":24.0,"hi":28.0,"s":"Knows more body parts","h":"103"},
+{"id":"1.132","a":1,"age":"24-30","lo":24.0,"hi":30.0,"s":"Selects pictures involving action words","h":"113"},
+{"id":"1.133","a":1,"age":"?-29","lo":null,"hi":29.0,"s":"Obeys two part commands","h":"114"},
+{"id":"1.134","a":1,"age":"24-27","lo":24.0,"hi":27.0,"s":"Understands complex and compound sentences","h":"115"},
+{"id":"1.135","a":1,"age":"25-30","lo":25.0,"hi":30.0,"s":"Gives one out of many","h":"106"},
+{"id":"1.136","a":1,"age":"26-30","lo":26.0,"hi":30.0,"s":"Matches shapes — circle, triangle, square (toys)","h":"116"},
+{"id":"1.137","a":1,"age":"26-29","lo":26.0,"hi":29.0,"s":"Matches colors — black, white","h":"118"},
+{"id":"1.138","a":1,"age":"26-33","lo":26.0,"hi":33.0,"s":"Knows own sex or sex of others","h":"119"},
+{"id":"1.139","a":1,"age":"27-30","lo":27.0,"hi":30.0,"s":"Matches identical simple pictures of objects","h":"120"},
+{"id":"1.140","a":1,"age":"27-30","lo":27.0,"hi":30.0,"s":"Listens to stories","h":"121"},
+{"id":"1.141","a":1,"age":"27-30","lo":27.0,"hi":30.0,"s":"Understands many action verbs","h":"113"},
+{"id":"1.142","a":1,"age":"28-34","lo":28.0,"hi":34.0,"s":"Identifies objects with their use","h":"122"},
+{"id":"1.143","a":1,"age":"28-34","lo":28.0,"hi":34.0,"s":"Identifies body parts with their function","h":"123"},
+{"id":"1.144","a":1,"age":"29-33","lo":29.0,"hi":33.0,"s":"Matches primary colors","h":"118"},
+{"id":"1.145","a":1,"age":"30-36","lo":30.0,"hi":36.0,"s":"Matches similar pictures of objects","h":"124"},
+{"id":"1.146","a":1,"age":"30-36","lo":30.0,"hi":36.0,"s":"Sorts shapes — circle, triangle, square (toys)","h":"125"},
+{"id":"1.147","a":1,"age":"30-36","lo":30.0,"hi":36.0,"s":"Completes three-four piece puzzle","h":"126"},
+{"id":"1.148","a":1,"age":"30-36","lo":30.0,"hi":36.0,"s":"Stacks rings in correct order","h":"127"},
+{"id":"1.149","a":1,"age":"30-36","lo":30.0,"hi":36.0,"s":"Points to larger or smaller of two spoons","h":"192"},
+{"id":"1.150","a":1,"age":"30-36","lo":30.0,"hi":36.0,"s":"Understands concept of two","h":"128"},
+{"id":"1.151","a":1,"age":"30-36","lo":30.0,"hi":36.0,"s":"Identifies familiar objects by touch","h":"129"},
+{"id":"1.152","a":1,"age":"30-36","lo":30.0,"hi":36.0,"s":"Enjoys being read to and looks at books independently","h":"121"},
+{"id":"1.153","a":1,"age":"30-36","lo":30.0,"hi":36.0,"s":"Plays house","h":"130"},
+{"id":"1.154","a":1,"age":"30-36","lo":30.0,"hi":36.0,"s":"Points to six body parts on picture of a doll","h":"131"},
+{"id":"1.155","a":1,"age":"30-33","lo":30.0,"hi":33.0,"s":"Understands more adjectives","h":"132"},
+{"id":"1.156","a":1,"age":"33+","lo":33.0,"hi":null,"s":"Sorts colors and points to several colors when named","h":"133"},
+{"id":"1.157","a":1,"age":"33+","lo":33.0,"hi":null,"s":"Identifies longer stick","h":"134"},
+{"id":"1.158","a":1,"age":"33-36","lo":33.0,"hi":36.0,"s":"Begins to pick longer of two lines","h":"134"},
+{"id":"1.159","a":1,"age":"33-36","lo":33.0,"hi":36.0,"s":"Understands all common verbs, most common adjectives","h":"132"},
+{"id":"2.01","a":2,"age":"0-1½","lo":0.0,"hi":1.5,"s":"Cry is monotonous, nasal, one breath long","h":"135"},
+{"id":"2.02","a":2,"age":"0-1","lo":0.0,"hi":1.0,"s":"Cries when hungry or uncomfortable","h":"135"},
+{"id":"2.03","a":2,"age":"0-2½","lo":0.0,"hi":2.5,"s":"Makes comfort sounds — reflexive vocal","h":"136"},
+{"id":"2.04","a":2,"age":"½-3","lo":0.5,"hi":3.0,"s":"Makes sucking sounds","h":"137"},
+{"id":"2.05","a":2,"age":"1-5","lo":1.0,"hi":5.0,"s":"Cry varies in pitch, length and volume to indicate needs such as hunger, pain","h":"138","f":2},
+{"id":"2.06","a":2,"age":"1½-4","lo":1.5,"hi":4.0,"s":"Laughs","h":"139"},
+{"id":"2.07","a":2,"age":"2-7","lo":2.0,"hi":7.0,"s":"Coos open vowels (aah), closed vowels (ee), diphthongs (oy as in boy)","h":"140"},
+{"id":"2.08","a":2,"age":"2-3","lo":2.0,"hi":3.0,"s":"Disassociates vocalizations from bodily movement","h":"142"},
+{"id":"2.09","a":2,"age":"2½-4½","lo":2.5,"hi":4.5,"s":"Cries more rhythmically with mouth opening and closing","h":"138","f":2},
+{"id":"2.10","a":2,"age":"2½-5½","lo":2.5,"hi":5.5,"s":"Squeals","h":"143"},
+{"id":"2.11","a":2,"age":"3-6","lo":3.0,"hi":6.0,"s":"Responds to sound stimulation or speech by vocalizing","h":"144"},
+{"id":"2.12","a":2,"age":"3½-4½","lo":3.5,"hi":4.5,"s":"Laughs when head is covered with a cloth","h":"37"},
+{"id":"2.13","a":2,"age":"4-6½","lo":4.0,"hi":6.5,"s":"Babbles consonant chains \"baba-baba\"","h":"145"},
+{"id":"2.14","a":2,"age":"5-6","lo":5.0,"hi":6.0,"s":"Vocalizes attitudes other than crying — joy, displeasure","h":"146"},
+{"id":"2.15","a":2,"age":"5-6","lo":5.0,"hi":6.0,"s":"Reacts to music by cooing","h":"147"},
+{"id":"2.16","a":2,"age":"5-7","lo":5.0,"hi":7.0,"s":"Looks and vocalizes to own name","h":"148"},
+{"id":"2.17","a":2,"age":"5-8","lo":5.0,"hi":8.0,"s":"Babbles double consonants \"baba\"","h":"149"},
+{"id":"2.18","a":2,"age":"5½-6½","lo":5.5,"hi":6.5,"s":"Babbles to people","h":"150"},
+{"id":"2.19","a":2,"age":"6-9","lo":6.0,"hi":9.0,"s":"Waves or responds to bye-bye","h":"151"},
+{"id":"2.20","a":2,"age":"6½-11½","lo":6.5,"hi":11.5,"s":"Says \"dada\" or \"mama,\" nonspecifically","h":"152"},
+{"id":"2.21","a":2,"age":"6½-8","lo":6.5,"hi":8.0,"s":"Shouts for attention","h":"153"},
+{"id":"2.22","a":2,"age":"7-15","lo":7.0,"hi":15.0,"s":"Produces these sounds frequently in babbling: b, m, p, d, t, n, g, k, w, h, f, v, th, s, z, l, r","h":"154"},
+{"id":"2.23","a":2,"age":"7½-9","lo":7.5,"hi":9.0,"s":"Vocalizes in interjectional manner","h":"155"},
+{"id":"2.24","a":2,"age":"7½-12","lo":7.5,"hi":12.0,"s":"Babbles with inflection similar to adult speech","h":"155"},
+{"id":"2.25","a":2,"age":"8-12","lo":8.0,"hi":12.0,"s":"Babbles single consonant \"ba\"","h":"156"},
+{"id":"2.26","a":2,"age":"9-14","lo":9.0,"hi":14.0,"s":"Shows understanding of words by appropriate behavior or gesture","h":"58"},
+{"id":"2.27","a":2,"age":"11-15","lo":11.0,"hi":15.0,"s":"Babbles in response to human voice","h":"157"},
+{"id":"2.28","a":2,"age":"11-12","lo":11.0,"hi":12.0,"s":"Babbles monologue when left alone","h":"158"},
+{"id":"2.29","a":2,"age":"11-14","lo":11.0,"hi":14.0,"s":"Says \"dada\" or \"mama,\" specifically","h":"152"},
+{"id":"2.30","a":2,"age":"11-12½","lo":11.0,"hi":12.5,"s":"Repeats sounds or gestures if laughed at","h":"159"},
+{"id":"2.31","a":2,"age":"11½-15","lo":11.5,"hi":15.0,"s":"Speech may plateau as child learns to walk","h":"160","f":2},
+{"id":"2.32","a":2,"age":"11½-15","lo":11.5,"hi":15.0,"s":"Unable to talk while walking","h":"?"},
+{"id":"2.33","a":2,"age":"12-17","lo":12.0,"hi":17.0,"s":"Omits final and some initial consonants","h":"161"},
+{"id":"2.34","a":2,"age":"12-18","lo":12.0,"hi":18.0,"s":"Babbles intricate inflection","h":"162"},
+{"id":"2.35","a":2,"age":"12-17½","lo":12.0,"hi":17.5,"s":"Experiments with communication — not frustrated when not understood","h":"162","f":2},
+{"id":"2.36","a":2,"age":"12-14","lo":12.0,"hi":14.0,"s":"Uses single word sentences","h":"163"},
+{"id":"2.37","a":2,"age":"12-15","lo":12.0,"hi":15.0,"s":"Uses expressive vocabulary one-three words","h":"164"},
+{"id":"2.38","a":2,"age":"12-19","lo":12.0,"hi":19.0,"s":"Vocalizes or gestures spontaneously to indicate needs","h":"165"},
+{"id":"2.39","a":2,"age":"12-15","lo":12.0,"hi":15.0,"s":"Greets with verbal cues","h":"166"},
+{"id":"2.40","a":2,"age":"12½-14½","lo":12.5,"hi":14.5,"s":"Uses exclamatory expressions — \"oh-oh,\" \"no-no\"","h":"167"},
+{"id":"2.41","a":2,"age":"13-15","lo":13.0,"hi":15.0,"s":"Says \"no\" meaningfully","h":"167"},
+{"id":"2.42","a":2,"age":"13-18","lo":13.0,"hi":18.0,"s":"Names one or two familiar objects","h":"168"},
+{"id":"2.43","a":2,"age":"13-16","lo":13.0,"hi":16.0,"s":"Attempts to sing sounds to music","h":"169"},
+{"id":"2.44","a":2,"age":"14-20","lo":14.0,"hi":20.0,"s":"Uses voice in conjunction with pointing or gesturing","h":"170"},
+{"id":"2.45","a":2,"age":"15-17½","lo":15.0,"hi":17.5,"s":"Uses ten-fifteen words spontaneously","h":"171"},
+{"id":"2.46","a":2,"age":"15-17½","lo":15.0,"hi":17.5,"s":"Vocalizes wishes and needs at the table: names desired items","h":"170"},
+{"id":"2.47","a":2,"age":"15½-21","lo":15.5,"hi":21.0,"s":"Makes sounds in babbling, but often substitutes those sounds in words","h":"172"},
+{"id":"2.48","a":2,"age":"17-19","lo":17.0,"hi":19.0,"s":"Jabbers tunefully at play","h":"172"},
+{"id":"2.49","a":2,"age":"17-19","lo":17.0,"hi":19.0,"s":"Echoes prominent or last word spoken","h":"172","f":2},
+{"id":"2.50","a":2,"age":"17½-20½","lo":17.5,"hi":20.5,"s":"Uses expressive vocabulary of fifteen-twenty words","h":"171"},
+{"id":"2.51","a":2,"age":"18-22","lo":18.0,"hi":22.0,"s":"Uses jargon with good inflection and rate","h":"172","f":2},
+{"id":"2.52","a":2,"age":"18-24","lo":18.0,"hi":24.0,"s":"Uses own name to refer to self","h":"173"},
+{"id":"2.53","a":2,"age":"18-21","lo":18.0,"hi":21.0,"s":"Imitates environmental sounds","h":"174"},
+{"id":"2.54","a":2,"age":"18-21","lo":18.0,"hi":21.0,"s":"Imitates two word phrases","h":"175"},
+{"id":"2.55","a":2,"age":"18-23","lo":18.0,"hi":23.0,"s":"Attempts to sing songs with words","h":"169"},
+{"id":"2.56","a":2,"age":"19-21½","lo":19.0,"hi":21.5,"s":"Names two pictures","h":"176"},
+{"id":"2.57","a":2,"age":"?½-24","lo":null,"hi":24.0,"s":"Uses two-word sentences","h":"177"},
+{"id":"2.58","a":2,"age":"20½-24","lo":20.5,"hi":24.0,"s":"Uses nouns, verbs, modifiers","h":"177"},
+{"id":"2.59","a":2,"age":"21-24","lo":21.0,"hi":24.0,"s":"Tells experience using jargon and words","h":"178"},
+{"id":"2.60","a":2,"age":"21½-24","lo":21.5,"hi":24.0,"s":"Uses intelligible words about 65 percent of the time","h":"179"},
+{"id":"2.61","a":2,"age":"21½-24","lo":21.5,"hi":24.0,"s":"Names three pictures","h":"176"},
+{"id":"2.62","a":2,"age":"22-24","lo":22.0,"hi":24.0,"s":"Uses elaborate jargon","h":"178","f":2},
+{"id":"2.63","a":2,"age":"22-24","lo":22.0,"hi":24.0,"s":"Imitates four word phrases","h":"180"},
+{"id":"2.64","a":2,"age":"23-27","lo":23.0,"hi":27.0,"s":"Sings phrases of songs","h":"180"},
+{"id":"2.65","a":2,"age":"24-27½","lo":24.0,"hi":27.5,"s":"Produces the following sounds clearly: p, b, m, k, g, w, h, n, t, d","h":"181"},
+{"id":"2.66","a":2,"age":"24-30","lo":24.0,"hi":30.0,"s":"Uses pronouns","h":"182"},
+{"id":"2.67","a":2,"age":"24-30","lo":24.0,"hi":30.0,"s":"Uses three word sentences","h":"183"},
+{"id":"2.68","a":2,"age":"24-30","lo":24.0,"hi":30.0,"s":"Uses past tense","h":"184"},
+{"id":"2.69","a":2,"age":"24-30½","lo":24.0,"hi":30.5,"s":"Uses expressive vocabulary of fifty or more words","h":"185"},
+{"id":"2.70","a":2,"age":"24-29","lo":24.0,"hi":29.0,"s":"Names five pictures","h":"186"},
+{"id":"2.71","a":2,"age":"24-27","lo":24.0,"hi":27.0,"s":"Imitates spontaneously or requests new words","h":"187"},
+{"id":"2.72","a":2,"age":"24-28½","lo":24.0,"hi":28.5,"s":"Experiments with communication — frustrated when not understood","h":"188"},
+{"id":"2.73","a":2,"age":"24-34","lo":24.0,"hi":34.0,"s":"Relates experiences using short sentences","h":"189"},
+{"id":"2.74","a":2,"age":"24-36","lo":24.0,"hi":36.0,"s":"Answers questions","h":"190"},
+{"id":"2.75","a":2,"age":"24-36","lo":24.0,"hi":36.0,"s":"Formulates negative reasoning","h":"191"},
+{"id":"2.76","a":2,"age":"25-30","lo":25.0,"hi":30.0,"s":"Uses size words","h":"192"},
+{"id":"2.77","a":2,"age":"27-36","lo":27.0,"hi":36.0,"s":"Uses plurals","h":"193"},
+{"id":"2.78","a":2,"age":"27-40","lo":27.0,"hi":40.0,"s":"Refers to self using pronoun","h":"182"},
+{"id":"2.79","a":2,"age":"27½-32","lo":27.5,"hi":32.0,"s":"Produces sounds correctly at beginning of words","h":"194"},
+{"id":"2.80","a":2,"age":"28-33","lo":28.0,"hi":33.0,"s":"Verbalizes one preposition","h":"195"},
+{"id":"2.81","a":2,"age":"28½-36","lo":28.5,"hi":36.0,"s":"Frustrated if not understood — utterances have communicative intent","h":"188"},
+{"id":"2.82","a":2,"age":"29-31","lo":29.0,"hi":31.0,"s":"Replaces jargon with sentences","h":"196"},
+{"id":"2.83","a":2,"age":"29-36","lo":29.0,"hi":36.0,"s":"Names eight or more pictures","h":"186"},
+{"id":"2.84","a":2,"age":"29-36","lo":29.0,"hi":36.0,"s":"Repeats words and sounds","h":"196","f":2},
+{"id":"2.85","a":2,"age":"29½-36","lo":29.5,"hi":36.0,"s":"Talks intelligently to self","h":"196"},
+{"id":"2.86","a":2,"age":"30-36","lo":30.0,"hi":36.0,"s":"Uses most basic grammatical structures","h":"197"},
+{"id":"2.87","a":2,"age":"30-36","lo":30.0,"hi":36.0,"s":"Over regulates and systemizes plurals and verbs (foots, doed)","h":"196","f":2},
+{"id":"2.88","a":2,"age":"30-31½","lo":30.0,"hi":31.5,"s":"Vocalizes for all needs","h":"198"},
+{"id":"2.89","a":2,"age":"30-33","lo":30.0,"hi":33.0,"s":"Gives full name on request","h":"199"},
+{"id":"2.90","a":2,"age":"30-36","lo":30.0,"hi":36.0,"s":"Participates in storytelling","h":"200"},
+{"id":"2.91","a":2,"age":"30-36","lo":30.0,"hi":36.0,"s":"Recites a few nursery rhymes","h":"201"},
+{"id":"2.92","a":2,"age":"30½-35","lo":30.5,"hi":35.0,"s":"Uses expressive vocabulary of 200 or more words","h":"n/a"},
+{"id":"2.93","a":2,"age":"33-35½","lo":33.0,"hi":35.5,"s":"Verbalizes two prepositions","h":"195"},
+{"id":"2.94","a":2,"age":"33-36","lo":33.0,"hi":36.0,"s":"Begins to respond to opposite analogies","h":"202"},
+{"id":"2.95","a":2,"age":"33½-36","lo":33.5,"hi":36.0,"s":"Repeats five word sentences","h":"203"},
+{"id":"2.96","a":2,"age":"34+","lo":34.0,"hi":null,"s":"Relates experiences more frequently using short sentences","h":"189"},
+{"id":"2.97","a":2,"age":"34½+","lo":34.5,"hi":null,"s":"Asks questions beginning with \"what,\" \"where,\" \"when\"","h":"204"},
+{"id":"2.98","a":2,"age":"35+","lo":35.0,"hi":null,"s":"Uses intelligible words about eighty percent of the time","h":"205"},
+{"id":"2.99","a":2,"age":"35+","lo":35.0,"hi":null,"s":"Uses expressive vocabulary of 300-1,000 words","h":"206"},
+{"id":"2.100","a":2,"age":"35½+","lo":35.5,"hi":null,"s":"Verbalizes three propositions","h":"195"},
+{"id":"3.01","a":3,"age":"0-2","lo":0.0,"hi":2.0,"s":"Neck righting reactions","h":"207"},
+{"id":"3.02","a":3,"age":"0-2","lo":0.0,"hi":2.0,"s":"Turns head to both sides in supine","h":"208"},
+{"id":"3.03","a":3,"age":"0-2","lo":0.0,"hi":2.0,"s":"Lifts head in prone","h":"210"},
+{"id":"3.04","a":3,"age":"0-2½","lo":0.0,"hi":2.5,"s":"Holds head up 45 degrees in prone","h":"210"},
+{"id":"3.05","a":3,"age":"0-2","lo":0.0,"hi":2.0,"s":"Holds head to one side in prone","h":"208"},
+{"id":"3.06","a":3,"age":"0-1","lo":0.0,"hi":1.0,"s":"Lifts head when held at shoulder","h":"211"},
+{"id":"3.07","a":3,"age":"1-3","lo":1.0,"hi":3.0,"s":"Holds head up 90 degrees in prone","h":"212"},
+{"id":"3.08","a":3,"age":"1½-2½","lo":1.5,"hi":2.5,"s":"Holds head in same plane as body when held in ventral suspension","h":"213"},
+{"id":"3.09","a":3,"age":"1½-2½","lo":1.5,"hi":2.5,"s":"Extends both legs","h":"214"},
+{"id":"3.10","a":3,"age":"1½-2","lo":1.5,"hi":2.0,"s":"Rolls side to supine","h":"215"},
+{"id":"3.11","a":3,"age":"1½-2½","lo":1.5,"hi":2.5,"s":"Kicks reciprocally","h":"216"},
+{"id":"3.12","a":3,"age":"2-4","lo":2.0,"hi":4.0,"s":"Extensor thrust inhibited","h":"217","f":1},
+{"id":"3.13","a":3,"age":"2-4","lo":2.0,"hi":4.0,"s":"Flexor withdrawal inhibited","h":"218","f":1},
+{"id":"3.14","a":3,"age":"2-3½","lo":2.0,"hi":3.5,"s":"Assumes withdrawal position","h":"219"},
+{"id":"3.15","a":3,"age":"2-4","lo":2.0,"hi":4.0,"s":"Holds chest up in prone — weight on forearms","h":"220"},
+{"id":"3.16","a":3,"age":"2-3","lo":2.0,"hi":3.0,"s":"Rotates and extends head","h":"220"},
+{"id":"3.17","a":3,"age":"2-5","lo":2.0,"hi":5.0,"s":"Rolls prone to supine","h":"221"},
+{"id":"3.18","a":3,"age":"2½-3½","lo":2.5,"hi":3.5,"s":"Holds head beyond plane of body when held in ventral suspension","h":"213"},
+{"id":"3.19","a":3,"age":"3-5","lo":3.0,"hi":5.0,"s":"Asymmetrical tonic neck reflex inhibited","h":"222","f":1},
+{"id":"3.20","a":3,"age":"3-6½","lo":3.0,"hi":6.5,"s":"Holds head in line with body when pulled to sitting","h":"223"},
+{"id":"3.21","a":3,"age":"3-5","lo":3.0,"hi":5.0,"s":"Holds head steady in supported sitting","h":"224"},
+{"id":"3.22","a":3,"age":"3-5","lo":3.0,"hi":5.0,"s":"Sits with slight support","h":"225"},
+{"id":"3.23","a":3,"age":"3-5","lo":3.0,"hi":5.0,"s":"Bears some weight on legs","h":"226"},
+{"id":"3.24","a":3,"age":"4-5","lo":4.0,"hi":5.0,"s":"Moro reflex inhibited","h":"227","f":1},
+{"id":"3.25","a":3,"age":"4-6","lo":4.0,"hi":6.0,"s":"Protective extension of arms and legs downward","h":"228"},
+{"id":"3.26","a":3,"age":"4-6","lo":4.0,"hi":6.0,"s":"Bears weight on hands in prone","h":"229"},
+{"id":"3.27","a":3,"age":"4-6","lo":4.0,"hi":6.0,"s":"Extends head, back and hips when held in ventral suspension","h":"213"},
+{"id":"3.28","a":3,"age":"4-5½","lo":4.0,"hi":5.5,"s":"Rolls supine to side","h":"230"},
+{"id":"3.29","a":3,"age":"4½-5½","lo":4.5,"hi":5.5,"s":"Sits momentarily leaning on hands","h":"231"},
+{"id":"3.30","a":3,"age":"5-6","lo":5.0,"hi":6.0,"s":"Demonstrates balance reactions in prone","h":"232"},
+{"id":"3.31","a":3,"age":"5-6","lo":5.0,"hi":6.0,"s":"Circular pivoting in prone","h":"233"},
+{"id":"3.32","a":3,"age":"5-6","lo":5.0,"hi":6.0,"s":"Moves head actively in supported sitting","h":"234"},
+{"id":"3.33","a":3,"age":"5-6","lo":5.0,"hi":6.0,"s":"Holds head erect when leaning forward","h":"234"},
+{"id":"3.34","a":3,"age":"5-8","lo":5.0,"hi":8.0,"s":"Sits independently indefinitely but may use hands","h":"235"},
+{"id":"3.35","a":3,"age":"5-6½","lo":5.0,"hi":6.5,"s":"Raises hips pushing with feet in supine","h":"236"},
+{"id":"3.36","a":3,"age":"5-6","lo":5.0,"hi":6.0,"s":"Bears almost all weight on legs","h":"226"},
+{"id":"3.37","a":3,"age":"5½-7½","lo":5.5,"hi":7.5,"s":"Lifts head and assists when pulled to sitting","h":"223"},
+{"id":"3.38","a":3,"age":"5½-7½","lo":5.5,"hi":7.5,"s":"Rolls supine to prone","h":"223"},
+{"id":"3.39","a":3,"age":"6-8","lo":6.0,"hi":8.0,"s":"Body righting on body reaction","h":"236"},
+{"id":"3.40","a":3,"age":"6-7","lo":6.0,"hi":7.0,"s":"Demonstrates balance reactions in supine","h":"237"},
+{"id":"3.41","a":3,"age":"6-8","lo":6.0,"hi":8.0,"s":"Protective extension of arms to side and front","h":"238"},
+{"id":"3.42","a":3,"age":"6-8","lo":6.0,"hi":8.0,"s":"Lifts head in supine","h":"239"},
+{"id":"3.43","a":3,"age":"6-7½","lo":6.0,"hi":7.5,"s":"Holds weight on one hand in prone","h":"240"},
+{"id":"3.44","a":3,"age":"?-10","lo":null,"hi":10.0,"s":"Gets to sitting without assistance","h":"241"},
+{"id":"3.45","a":3,"age":"6-7","lo":6.0,"hi":7.0,"s":"Bears large fraction of weight on legs and bounces","h":"226"},
+{"id":"3.46","a":3,"age":"6-10½","lo":6.0,"hi":10.5,"s":"Stands, holding on","h":"242"},
+{"id":"3.47","a":3,"age":"6-10","lo":6.0,"hi":10.0,"s":"Pulls to standing at furniture","h":"243"},
+{"id":"3.48","a":3,"age":"6-8","lo":6.0,"hi":8.0,"s":"Brings one knee forward beside trunk in prone","h":"244"},
+{"id":"3.49","a":3,"age":"7-8","lo":7.0,"hi":8.0,"s":"Crawls backward","h":"247","f":2},
+{"id":"3.50","a":3,"age":"8-9","lo":8.0,"hi":9.0,"s":"Demonstrates balance reactions on hands and knees","h":"245"},
+{"id":"3.51","a":3,"age":"8-9","lo":8.0,"hi":9.0,"s":"Sits without hand support for ten minutes","h":"246"},
+{"id":"3.52","a":3,"age":"8-9½","lo":8.0,"hi":9.5,"s":"Crawls forward","h":"247"},
+{"id":"3.53","a":3,"age":"8-10","lo":8.0,"hi":10.0,"s":"Makes stepping movements","h":"257"},
+{"id":"3.54","a":3,"age":"8-9","lo":8.0,"hi":9.0,"s":"Assumes hand-knee position","h":"248"},
+{"id":"3.55","a":3,"age":"9-10","lo":9.0,"hi":10.0,"s":"Demonstrates balance reactions in sitting","h":"249"},
+{"id":"3.56","a":3,"age":"9-11","lo":9.0,"hi":11.0,"s":"Protective extension of arms to back","h":"250"},
+{"id":"3.57","a":3,"age":"9-10","lo":9.0,"hi":10.0,"s":"Goes from sitting to prone","h":"251"},
+{"id":"3.58","a":3,"age":"9-10","lo":9.0,"hi":10.0,"s":"Lowers to sitting from furniture","h":"252"},
+{"id":"3.59","a":3,"age":"9-11","lo":9.0,"hi":11.0,"s":"Creeps on hands and knees","h":"253"},
+{"id":"3.60","a":3,"age":"9½-11","lo":9.5,"hi":11.0,"s":"Stands momentarily","h":"254"},
+{"id":"3.61","a":3,"age":"9½-13","lo":9.5,"hi":13.0,"s":"Walks holding on to furniture","h":"255"},
+{"id":"3.62","a":3,"age":"10-11","lo":10.0,"hi":11.0,"s":"Extends head, back, hips and legs in ventral suspension","h":"213"},
+{"id":"3.63","a":3,"age":"10-11","lo":10.0,"hi":11.0,"s":"Pivots in sitting — twists to pick up objects","h":"256"},
+{"id":"3.64","a":3,"age":"10-12","lo":10.0,"hi":12.0,"s":"Creeps on hands and feet","h":"n/a"},
+{"id":"3.65","a":3,"age":"10-12","lo":10.0,"hi":12.0,"s":"Walks with both hands held","h":"257"},
+{"id":"3.66","a":3,"age":"10½-14","lo":10.5,"hi":14.0,"s":"Stoops and recovers","h":"258"},
+{"id":"3.67","a":3,"age":"11-12","lo":11.0,"hi":12.0,"s":"Stands by lifting one foot","h":"259"},
+{"id":"3.68","a":3,"age":"11-13","lo":11.0,"hi":13.0,"s":"Stands a few seconds","h":"254"},
+{"id":"3.69","a":3,"age":"11-13","lo":11.0,"hi":13.0,"s":"Assumes and maintains kneeling","h":"260"},
+{"id":"3.70","a":3,"age":"11-13","lo":11.0,"hi":13.0,"s":"Walks with one hand held","h":"261"},
+{"id":"3.71","a":3,"age":"11½-14","lo":11.5,"hi":14.0,"s":"Stands alone well","h":"254"},
+{"id":"3.72","a":3,"age":"11½-13½","lo":11.5,"hi":13.5,"s":"Walks alone two to three steps","h":"262"},
+{"id":"3.73","a":3,"age":"12-15","lo":12.0,"hi":15.0,"s":"Demonstrates balance reactions in kneeling","h":"263"},
+{"id":"3.74","a":3,"age":"12-14","lo":12.0,"hi":14.0,"s":"Falls by sitting","h":"264"},
+{"id":"3.75","a":3,"age":"12½-15","lo":12.5,"hi":15.0,"s":"Stands from supine by turning on all fours","h":"265"},
+{"id":"3.76","a":3,"age":"12½-21","lo":12.5,"hi":21.0,"s":"Walks backwards","h":"266"},
+{"id":"3.77","a":3,"age":"13-16","lo":13.0,"hi":16.0,"s":"Throws ball underhand in sitting","h":"267"},
+{"id":"3.78","a":3,"age":"13½-15","lo":13.5,"hi":15.0,"s":"Creeps or hitches upstairs","h":"268"},
+{"id":"3.79","a":3,"age":"13-15","lo":13.0,"hi":15.0,"s":"Walks without support","h":"269"},
+{"id":"3.80","a":3,"age":"14-15","lo":14.0,"hi":15.0,"s":"Walks sideways","h":"266"},
+{"id":"3.81","a":3,"age":"14-18","lo":14.0,"hi":18.0,"s":"Runs — hurried walk","h":"270"},
+{"id":"3.82","a":3,"age":"14½-15½","lo":14.5,"hi":15.5,"s":"Bends over and looks through legs","h":"n/a"},
+{"id":"3.83","a":3,"age":"15-18","lo":15.0,"hi":18.0,"s":"Demonstrates balance reactions in standing","h":"271"},
+{"id":"3.84","a":3,"age":"15-18","lo":15.0,"hi":18.0,"s":"Walks into large ball while trying to kick it","h":"271"},
+{"id":"3.85","a":3,"age":"15-18","lo":15.0,"hi":18.0,"s":"Throws ball forward","h":"272"},
+{"id":"3.86","a":3,"age":"15-17","lo":15.0,"hi":17.0,"s":"Walks with assistance on eight inch board","h":"271"},
+{"id":"3.87","a":3,"age":"15-18","lo":15.0,"hi":18.0,"s":"Pulls toy behind while walking","h":"269"},
+{"id":"3.88","a":3,"age":"16-22","lo":16.0,"hi":22.0,"s":"Throws ball overhand landing within three feet of target","h":"272"},
+{"id":"3.89","a":3,"age":"16-17","lo":16.0,"hi":17.0,"s":"Stands on one foot with help","h":"273"},
+{"id":"3.90","a":3,"age":"17-19","lo":17.0,"hi":19.0,"s":"Walks upstairs with one hand held","h":"274"},
+{"id":"3.91","a":3,"age":"17-18½","lo":17.0,"hi":18.5,"s":"Carries large toy while walking","h":"275"},
+{"id":"3.92","a":3,"age":"17-18½","lo":17.0,"hi":18.5,"s":"Pushes and pulls large toys or boxes around the floor","h":"275"},
+{"id":"3.93","a":3,"age":"17½-19½","lo":17.5,"hi":19.5,"s":"Walks independently on eight inch board","h":"275"},
+{"id":"3.94","a":3,"age":"17½-18½","lo":17.5,"hi":18.5,"s":"Tries to stand on two inch balance beam","h":"275"},
+{"id":"3.95","a":3,"age":"17½-19","lo":17.5,"hi":19.0,"s":"Backs into small chair or slides sideways","h":"276"},
+{"id":"3.96","a":3,"age":"18-24½","lo":18.0,"hi":24.5,"s":"Kicks ball forward","h":"277"},
+{"id":"3.97","a":3,"age":"18-20","lo":18.0,"hi":20.0,"s":"Throws ball into a box","h":"272"},
+{"id":"3.98","a":3,"age":"18-24","lo":18.0,"hi":24.0,"s":"Moves on \"ride on\" toys without pedals","h":"278"},
+{"id":"3.99","a":3,"age":"18-24","lo":18.0,"hi":24.0,"s":"Runs fairly well","h":"279"},
+{"id":"3.100","a":3,"age":"18-21","lo":18.0,"hi":21.0,"s":"Climbs forward on adult chair, turns around and sits","h":"280"},
+{"id":"3.101","a":3,"age":"19-21","lo":19.0,"hi":21.0,"s":"Walks downstairs with one hand held","h":"281"},
+{"id":"3.102","a":3,"age":"19-24","lo":19.0,"hi":24.0,"s":"Picks up toy from floor without falling","h":"282"},
+{"id":"3.103","a":3,"age":"20-21","lo":20.0,"hi":21.0,"s":"Squats in play","h":"282"},
+{"id":"3.104","a":3,"age":"20-22","lo":20.0,"hi":22.0,"s":"Stands from supine by rolling to side","h":"283"},
+{"id":"3.105","a":3,"age":"20½-21½","lo":20.5,"hi":21.5,"s":"Walks a few steps with one foot on two inch balance beam","h":"275"},
+{"id":"3.106","a":3,"age":"22-24","lo":22.0,"hi":24.0,"s":"Walks upstairs holding rail — both feet on step","h":"284"},
+{"id":"3.107","a":3,"age":"22-30","lo":22.0,"hi":30.0,"s":"Jumps in place both feet","h":"285"},
+{"id":"3.108","a":3,"age":"23-26","lo":23.0,"hi":26.0,"s":"Goes up and down slide","h":"286"},
+{"id":"3.109","a":3,"age":"23-25½","lo":23.0,"hi":25.5,"s":"Stands on tiptoes","h":"287"},
+{"id":"3.110","a":3,"age":"23-25","lo":23.0,"hi":25.0,"s":"Walks with legs closer together","h":"288"},
+{"id":"3.111","a":3,"age":"24-26","lo":24.0,"hi":26.0,"s":"Catches large ball","h":"289"},
+{"id":"3.112","a":3,"age":"24-30","lo":24.0,"hi":30.0,"s":"Rides tricycle","h":"290"},
+{"id":"3.113","a":3,"age":"24-36","lo":24.0,"hi":36.0,"s":"Imitates simple bilateral movements of limbs, head and trunk","h":"291"},
+{"id":"3.114","a":3,"age":"24-25½","lo":24.0,"hi":25.5,"s":"Walks upstairs alone — both feet on step","h":"292"},
+{"id":"3.115","a":3,"age":"24-26","lo":24.0,"hi":26.0,"s":"Walks downstairs holding rail — both feet on step","h":"293"},
+{"id":"3.116","a":3,"age":"24-30","lo":24.0,"hi":30.0,"s":"Jumps a distance of eight inches to fourteen inches","h":"285"},
+{"id":"3.117","a":3,"age":"24-26½","lo":24.0,"hi":26.5,"s":"Jumps from bottom step","h":"285"},
+{"id":"3.118","a":3,"age":"24-30","lo":24.0,"hi":30.0,"s":"Runs — stops without holding and avoids obstacles","h":"294"},
+{"id":"3.119","a":3,"age":"24-26","lo":24.0,"hi":26.0,"s":"Walks on line in general direction","h":"288"},
+{"id":"3.120","a":3,"age":"24-30","lo":24.0,"hi":30.0,"s":"Walks between parallel lines eight inches apart","h":"288"},
+{"id":"3.121","a":3,"age":"24½-26","lo":24.5,"hi":26.0,"s":"Stands on two inch balance beam with both feet","h":"295"},
+{"id":"3.122","a":3,"age":"24-30","lo":24.0,"hi":30.0,"s":"Imitates one foot standing","h":"296"},
+{"id":"3.123","a":3,"age":"25½-27","lo":25.5,"hi":27.0,"s":"Walks downstairs alone — both feet on step","h":"297"},
+{"id":"3.124","a":3,"age":"25½-30","lo":25.5,"hi":30.0,"s":"Walks on tip-toes a few steps","h":"287"},
+{"id":"3.125","a":3,"age":"27-29","lo":27.0,"hi":29.0,"s":"Jumps backwards","h":"285"},
+{"id":"3.126","a":3,"age":"27½-28½","lo":27.5,"hi":28.5,"s":"Attempts step on two inch balance beam","h":"295"},
+{"id":"3.127","a":3,"age":"28-29½","lo":28.0,"hi":29.5,"s":"Walks backward ten feet","h":"295"},
+{"id":"3.128","a":3,"age":"29-32","lo":29.0,"hi":32.0,"s":"Jumps sidewards","h":"285"},
+{"id":"3.129","a":3,"age":"29-31","lo":29.0,"hi":31.0,"s":"Jumps on trampoline with adult holding hands","h":"285"},
+{"id":"3.130","a":3,"age":"30-32","lo":30.0,"hi":32.0,"s":"Alternates steps part way on two inch balance beam","h":"298"},
+{"id":"3.131","a":3,"age":"30-34","lo":30.0,"hi":34.0,"s":"Walks upstairs alternating feet","h":"299"},
+{"id":"3.132","a":3,"age":"30-36","lo":30.0,"hi":36.0,"s":"Jumps over string two to eight inches high","h":"300"},
+{"id":"3.133","a":3,"age":"30-36","lo":30.0,"hi":36.0,"s":"Hops on one foot","h":"301"},
+{"id":"3.134","a":3,"age":"?-34½","lo":null,"hi":34.5,"s":"Jumps a distance of fourteen inches to twenty-four inches","h":"302"},
+{"id":"3.135","a":3,"age":"30-33","lo":30.0,"hi":33.0,"s":"Stands from supine using a sit-up","h":"303"},
+{"id":"3.136","a":3,"age":"30-36","lo":30.0,"hi":36.0,"s":"Stands on one foot one second to five seconds","h":"304"},
+{"id":"3.137","a":3,"age":"30-36","lo":30.0,"hi":36.0,"s":"Walks on tiptoes ten feet","h":"305"},
+{"id":"3.138","a":3,"age":"32-36","lo":32.0,"hi":36.0,"s":"Keeps feet on line for ten feet","h":"298"},
+{"id":"3.139","a":3,"age":"32-36","lo":32.0,"hi":36.0,"s":"Uses pedals on tricycle alternately","h":"306"},
+{"id":"3.140","a":3,"age":"34+","lo":34.0,"hi":null,"s":"Walks downstairs alternating feet","h":"299"},
+{"id":"3.141","a":3,"age":"34½-36","lo":34.5,"hi":36.0,"s":"Climbs jungle gyms and ladders","h":"307"},
+{"id":"3.142","a":3,"age":"35+","lo":35.0,"hi":null,"s":"Catches eight inch ball","h":"308"},
+{"id":"3.143","a":3,"age":"34½-36","lo":34.5,"hi":36.0,"s":"Jumps a distance of 24 inches to 34 inches","h":"302"},
+{"id":"3.144","a":3,"age":"34½-36","lo":34.5,"hi":36.0,"s":"Avoids obstacles in path","h":"309"},
+{"id":"3.145","a":3,"age":"34½-36","lo":34.5,"hi":36.0,"s":"Runs on toes","h":"305"},
+{"id":"3.146","a":3,"age":"34½-36","lo":34.5,"hi":36.0,"s":"Makes sharp turns around corners when running","h":"309"},
+{"id":"4.01","a":4,"age":"0-1","lo":0.0,"hi":1.0,"s":"Regards colorful object momentarily","h":"311"},
+{"id":"4.02","a":4,"age":"0-2","lo":0.0,"hi":2.0,"s":"Moves arms symmetrically","h":"312"},
+{"id":"4.03","a":4,"age":"½-2½","lo":0.5,"hi":2.5,"s":"Regards colorful object for few seconds","h":"311"},
+{"id":"4.04","a":4,"age":"½-1½","lo":0.5,"hi":1.5,"s":"Follows with eyes moving person while in supine","h":"313","f":1},
+{"id":"4.05","a":4,"age":"1-2","lo":1.0,"hi":2.0,"s":"Stares and gazes","h":"6"},
+{"id":"4.06","a":4,"age":"1-3","lo":1.0,"hi":3.0,"s":"Follows with eyes to midline","h":"314"},
+{"id":"4.07","a":4,"age":"1-3½","lo":1.0,"hi":3.5,"s":"Brings hands to midline in supine","h":"315"},
+{"id":"4.08","a":4,"age":"1-3","lo":1.0,"hi":3.0,"s":"Activates arms on sight of toy","h":"312"},
+{"id":"4.09","a":4,"age":"2-3","lo":2.0,"hi":3.0,"s":"Blinks at sudden visual stimulus","h":"n/a"},
+{"id":"4.10","a":4,"age":"2-3","lo":2.0,"hi":3.0,"s":"Follows with eyes past midline","h":"314"},
+{"id":"4.11","a":4,"age":"2-3","lo":2.0,"hi":3.0,"s":"Follows with eyes downward","h":"314"},
+{"id":"4.12","a":4,"age":"2-3","lo":2.0,"hi":3.0,"s":"Indwelling thumb no longer present","h":"316","f":1},
+{"id":"4.13","a":4,"age":"2-4","lo":2.0,"hi":4.0,"s":"Grasps toy actively","h":"317"},
+{"id":"4.14","a":4,"age":"2½-3½","lo":2.5,"hi":3.5,"s":"Looks from one object to another","h":"318"},
+{"id":"4.15","a":4,"age":"2½-3½","lo":2.5,"hi":3.5,"s":"Keeps hands open fifty percent of the time","h":"316"},
+{"id":"4.16","a":4,"age":"2½-4½","lo":2.5,"hi":4.5,"s":"Reaches toward toy without grasping","h":"319"},
+{"id":"4.17","a":4,"age":"3-5","lo":3.0,"hi":5.0,"s":"Follows with eyes 180 degrees","h":"314"},
+{"id":"4.18","a":4,"age":"3-4½","lo":3.0,"hi":4.5,"s":"Follows with eyes, moving object in supported sitting","h":"313"},
+{"id":"4.19","a":4,"age":"3-4","lo":3.0,"hi":4.0,"s":"Follows with eyes upward","h":"314"},
+{"id":"4.20","a":4,"age":"3-4","lo":3.0,"hi":4.0,"s":"Grasp reflex inhibited","h":"317","f":1},
+{"id":"4.21","a":4,"age":"3½-5","lo":3.5,"hi":5.0,"s":"Clasps hands","h":"315"},
+{"id":"4.22","a":4,"age":"3½-4½","lo":3.5,"hi":4.5,"s":"Uses ulnar palmar grasp","h":"320","f":1},
+{"id":"4.23","a":4,"age":"4-5","lo":4.0,"hi":5.0,"s":"Looks with head in midline","h":"321"},
+{"id":"4.24","a":4,"age":"4-6","lo":4.0,"hi":6.0,"s":"Follows with eyes without head movement","h":"314"},
+{"id":"4.25","a":4,"age":"4-8","lo":4.0,"hi":8.0,"s":"Keeps hands open most of the time","h":"316"},
+{"id":"4.26","a":4,"age":"4-5","lo":4.0,"hi":5.0,"s":"Reaches for object bilaterally","h":"322"},
+{"id":"4.27","a":4,"age":"4-5","lo":4.0,"hi":5.0,"s":"Reaches for toy followed by momentary grasp","h":"322"},
+{"id":"4.28","a":4,"age":"4-5","lo":4.0,"hi":5.0,"s":"Uses palmar grasp","h":"323","f":1},
+{"id":"4.29","a":4,"age":"4½-5½","lo":4.5,"hi":5.5,"s":"Reaches and grasps object","h":"322"},
+{"id":"4.30","a":4,"age":"4½-6","lo":4.5,"hi":6.0,"s":"Uses radial palmar grasp","h":"324","f":1},
+{"id":"4.31","a":4,"age":"4½-5½","lo":4.5,"hi":5.5,"s":"Regards tiny object","h":"325"},
+{"id":"4.32","a":4,"age":"5-6","lo":5.0,"hi":6.0,"s":"Looks at distant objects","h":"326"},
+{"id":"4.33","a":4,"age":"5-6","lo":5.0,"hi":6.0,"s":"Drops object","h":"327"},
+{"id":"4.34","a":4,"age":"5-6","lo":5.0,"hi":6.0,"s":"Recovers object","h":"327"},
+{"id":"4.35","a":4,"age":"5-6","lo":5.0,"hi":6.0,"s":"Retains small object in each hand","h":"28"},
+{"id":"4.36","a":4,"age":"5½-7","lo":5.5,"hi":7.0,"s":"Watches adult scribble","h":"328"},
+{"id":"4.37","a":4,"age":"5½-7","lo":5.5,"hi":7.0,"s":"Reaches for object unilaterally","h":"329"},
+{"id":"4.38","a":4,"age":"5½-7","lo":5.5,"hi":7.0,"s":"Transfers object","h":"330"},
+{"id":"4.39","a":4,"age":"5½-7","lo":5.5,"hi":7.0,"s":"Bangs object on table","h":"331"},
+{"id":"4.40","a":4,"age":"5½-7","lo":5.5,"hi":7.0,"s":"Attempts to secure tiny object","h":"332"},
+{"id":"4.41","a":4,"age":"6-8","lo":6.0,"hi":8.0,"s":"Manipulates toy actively with wrist movements","h":"333"},
+{"id":"4.42","a":4,"age":"7-8½","lo":7.0,"hi":8.5,"s":"Reaches and grasps object with extended elbow","h":"334"},
+{"id":"4.43","a":4,"age":"7-9","lo":7.0,"hi":9.0,"s":"Uses radial digital grasp","h":"335","f":1},
+{"id":"4.44","a":4,"age":"7-8","lo":7.0,"hi":8.0,"s":"Rakes tiny object","h":"332","f":1},
+{"id":"4.45","a":4,"age":"7½-10","lo":7.5,"hi":10.0,"s":"Uses inferior pincer grasp","h":"336","f":1},
+{"id":"4.46","a":4,"age":"8½-12","lo":8.5,"hi":12.0,"s":"Bangs two cubes held in hands","h":"337"},
+{"id":"4.47","a":4,"age":"8½-10","lo":8.5,"hi":10.0,"s":"Removes pegs from pegboard","h":"338"},
+{"id":"4.48","a":4,"age":"9-11","lo":9.0,"hi":11.0,"s":"Takes objects out of container","h":"339"},
+{"id":"4.49","a":4,"age":"9-10","lo":9.0,"hi":10.0,"s":"Extends wrist","h":"340"},
+{"id":"4.50","a":4,"age":"9-11","lo":9.0,"hi":11.0,"s":"Releases object voluntarily","h":"341","f":1},
+{"id":"4.51","a":4,"age":"9-12","lo":9.0,"hi":12.0,"s":"Pokes with index finger","h":"342"},
+{"id":"4.52","a":4,"age":"10-12","lo":10.0,"hi":12.0,"s":"Uses neat pincer grasp","h":"343","f":1},
+{"id":"4.53","a":4,"age":"10½-12","lo":10.5,"hi":12.0,"s":"Tries to imitate scribble","h":"344","f":1},
+{"id":"4.54","a":4,"age":"11-13","lo":11.0,"hi":13.0,"s":"Uses both hands freely; may show preference for one","h":"345"},
+{"id":"4.55","a":4,"age":"11-12","lo":11.0,"hi":12.0,"s":"Grasps crayon adaptively","h":"344"},
+{"id":"4.56","a":4,"age":"11-12","lo":11.0,"hi":12.0,"s":"Puts objects into container","h":"346"},
+{"id":"4.57","a":4,"age":"11-12","lo":11.0,"hi":12.0,"s":"Supinates forearm","h":"347","f":1},
+{"id":"4.58","a":4,"age":"11-12","lo":11.0,"hi":12.0,"s":"Places one block on top of another without balancing","h":"348"},
+{"id":"4.59","a":4,"age":"12-13","lo":12.0,"hi":13.0,"s":"Marks paper with crayon","h":"344"},
+{"id":"4.60","a":4,"age":"12-13","lo":12.0,"hi":13.0,"s":"Puts three or more objects into container","h":"346"},
+{"id":"4.61","a":4,"age":"12-16","lo":12.0,"hi":16.0,"s":"Builds tower using two cubes","h":"349"},
+{"id":"4.62","a":4,"age":"12-15","lo":12.0,"hi":15.0,"s":"Places one round peg in pegboard","h":"350"},
+{"id":"4.63","a":4,"age":"12-16","lo":12.0,"hi":16.0,"s":"Points with index finger","h":"351"},
+{"id":"4.64","a":4,"age":"12½-18","lo":12.5,"hi":18.0,"s":"Inverts small container to obtain tiny object after demonstration","h":"352","f":1},
+{"id":"4.65","a":4,"age":"13-18","lo":13.0,"hi":18.0,"s":"Scribbles spontaneously","h":"353"},
+{"id":"4.66","a":4,"age":"13½-19","lo":13.5,"hi":19.0,"s":"Inverts small container spontaneously to obtain tiny object","h":"352"},
+{"id":"4.67","a":4,"age":"14-15","lo":14.0,"hi":15.0,"s":"Puts many objects into container without removing any","h":"354"},
+{"id":"4.68","a":4,"age":"16-18","lo":16.0,"hi":18.0,"s":"Uses both hands in midline — one holds, other manipulates","h":"355"},
+{"id":"4.69","a":4,"age":"16-18","lo":16.0,"hi":18.0,"s":"Builds tower using three cubes","h":"349"},
+{"id":"4.70","a":4,"age":"16-19","lo":16.0,"hi":19.0,"s":"Places six round pegs in pegboard","h":"350"},
+{"id":"4.71","a":4,"age":"18-24","lo":18.0,"hi":24.0,"s":"Imitates vertical stroke","h":"356"},
+{"id":"4.72","a":4,"age":"18-22","lo":18.0,"hi":22.0,"s":"Builds tower using four cubes","h":"349"},
+{"id":"4.73","a":4,"age":"20-24","lo":20.0,"hi":24.0,"s":"Imitates circular scribble","h":"357"},
+{"id":"4.74","a":4,"age":"20-23","lo":20.0,"hi":23.0,"s":"Strings one one-inch bead","h":"358"},
+{"id":"4.75","a":4,"age":"21-24","lo":21.0,"hi":24.0,"s":"Imitates horizontal stroke","h":"359"},
+{"id":"4.76","a":4,"age":"?-24","lo":null,"hi":24.0,"s":"Folds paper imitatively, not precisely","h":"360"},
+{"id":"4.77","a":4,"age":"22-24","lo":22.0,"hi":24.0,"s":"Builds tower using six cubes","h":"349"},
+{"id":"4.78","a":4,"age":"23-25","lo":23.0,"hi":25.0,"s":"Holds crayon with thumb and fingers","h":"361"},
+{"id":"4.79","a":4,"age":"23-26","lo":23.0,"hi":26.0,"s":"Imitates three block train using cubes","h":"362"},
+{"id":"4.80","a":4,"age":"23-25","lo":23.0,"hi":25.0,"s":"Strings three one-inch beads","h":"358"},
+{"id":"4.81","a":4,"age":"23-25","lo":23.0,"hi":25.0,"s":"Snips with scissors","h":"363"},
+{"id":"4.82","a":4,"age":"24-36","lo":24.0,"hi":36.0,"s":"Imitates a cross","h":"364"},
+{"id":"4.83","a":4,"age":"24-35","lo":24.0,"hi":35.0,"s":"Makes first designs or spontaneous forms","h":"365"},
+{"id":"4.84","a":4,"age":"24-30","lo":24.0,"hi":30.0,"s":"Puts tiny object into small container","h":"366"},
+{"id":"4.85","a":4,"age":"24-30","lo":24.0,"hi":30.0,"s":"Folds paper in half","h":"367"},
+{"id":"4.86","a":4,"age":"25-36","lo":25.0,"hi":36.0,"s":"Copies a circle","h":"368"},
+{"id":"4.87","a":4,"age":"28-31","lo":28.0,"hi":31.0,"s":"Builds tower using eight cubes","h":"349"},
+{"id":"4.88","a":4,"age":"28-35","lo":28.0,"hi":35.0,"s":"Snips on line using scissors","h":"369"},
+{"id":"4.89","a":4,"age":"29-31","lo":29.0,"hi":31.0,"s":"Holds pencil with thumb and fingers — adult-like grasp","h":"361"},
+{"id":"4.90","a":4,"age":"29-31","lo":29.0,"hi":31.0,"s":"Places six square pegs in pegboard","h":"n/a"},
+{"id":"4.91","a":4,"age":"31+","lo":31.0,"hi":null,"s":"Imitates three block bridge using cubes","h":"370"},
+{"id":"4.92","a":4,"age":"32-36","lo":32.0,"hi":36.0,"s":"Builds tower using nine cubes","h":"349"},
+{"id":"4.93","a":4,"age":"33½+","lo":33.5,"hi":null,"s":"Strings one-half-inch beads","h":"371"},
+{"id":"5.01","a":5,"age":"0-3","lo":0.0,"hi":3.0,"s":"Enjoys and needs a great deal of physical contact and tactile stimulation","h":"373"},
+{"id":"5.02","a":5,"age":"0-1","lo":0.0,"hi":1.0,"s":"Regards face","h":"374"},
+{"id":"5.03","a":5,"age":"0-1½","lo":0.0,"hi":1.5,"s":"Smiles reflexively","h":"375"},
+{"id":"5.04","a":5,"age":"0-2","lo":0.0,"hi":2.0,"s":"Establishes eye contact","h":"376"},
+{"id":"5.05","a":5,"age":"0-3","lo":0.0,"hi":3.0,"s":"Molds and relaxes body when held; cuddles","h":"377"},
+{"id":"5.06","a":5,"age":"0-3","lo":0.0,"hi":3.0,"s":"Draws attention to self when in distress","h":"135"},
+{"id":"5.07","a":5,"age":"1½-4","lo":1.5,"hi":4.0,"s":"Responds with smile when socially approached","h":"378"},
+{"id":"5.08","a":5,"age":"3-6","lo":3.0,"hi":6.0,"s":"Stops unexplained crying","h":"530","f":2},
+{"id":"5.09","a":5,"age":"3-5","lo":3.0,"hi":5.0,"s":"Vocalizes in response to adult talk and smile","h":"144"},
+{"id":"5.10","a":5,"age":"3-6","lo":3.0,"hi":6.0,"s":"Discriminates strangers","h":"379"},
+{"id":"5.11","a":5,"age":"3-5","lo":3.0,"hi":5.0,"s":"Socializes with strangers/anyone","h":"379"},
+{"id":"5.12","a":5,"age":"3-8","lo":3.0,"hi":8.0,"s":"Demands social attention","h":"153"},
+{"id":"5.13","a":5,"age":"3-6","lo":3.0,"hi":6.0,"s":"Vocalizes attitudes — pleasure and displeasure","h":"146"},
+{"id":"5.14","a":5,"age":"3-6","lo":3.0,"hi":6.0,"s":"Becomes aware of strange situations","h":"380"},
+{"id":"5.15","a":5,"age":"3-6","lo":3.0,"hi":6.0,"s":"Enjoys social play","h":"381"},
+{"id":"5.16","a":5,"age":"3-5½","lo":3.0,"hi":5.5,"s":"Makes approach movements to mirror","h":"382"},
+{"id":"5.17","a":5,"age":"4-8","lo":4.0,"hi":8.0,"s":"Recognizes mother visually","h":"383"},
+{"id":"5.18","a":5,"age":"4-8","lo":4.0,"hi":8.0,"s":"Enjoys frolic play","h":"384"},
+{"id":"5.19","a":5,"age":"4-8","lo":4.0,"hi":8.0,"s":"Repeats enjoyable activities","h":"24"},
+{"id":"5.20","a":5,"age":"5-8","lo":5.0,"hi":8.0,"s":"Displays stranger anxiety","h":"385"},
+{"id":"5.21","a":5,"age":"5-6","lo":5.0,"hi":6.0,"s":"Lifts arms to mother","h":"386"},
+{"id":"5.22","a":5,"age":"5-7","lo":5.0,"hi":7.0,"s":"Explores adult features","h":"387"},
+{"id":"5.23","a":5,"age":"5½-8½","lo":5.5,"hi":8.5,"s":"Smiles at mirror image","h":"388"},
+{"id":"5.24","a":5,"age":"6-9","lo":6.0,"hi":9.0,"s":"Distinguishes self as separate from mother","h":"389"},
+{"id":"5.25","a":5,"age":"6-9","lo":6.0,"hi":9.0,"s":"Shows anxiety over separation from mother","h":"390","f":1},
+{"id":"5.26","a":5,"age":"6-10","lo":6.0,"hi":10.0,"s":"Cooperates in games","h":"392"},
+{"id":"5.27","a":5,"age":"6-12","lo":6.0,"hi":12.0,"s":"Struggles against supine position","h":"393","f":2},
+{"id":"5.28","a":5,"age":"6-9","lo":6.0,"hi":9.0,"s":"Responds playfully to mirror","h":"388"},
+{"id":"5.29","a":5,"age":"6-18","lo":6.0,"hi":18.0,"s":"May show fear and insecurity with previously accepted situations","h":"394","f":2},
+{"id":"5.30","a":5,"age":"7-12","lo":7.0,"hi":12.0,"s":"Shows like/dislike for certain people, objects, places","h":"395"},
+{"id":"5.31","a":5,"age":"8-12","lo":8.0,"hi":12.0,"s":"Lets only mother meet his needs","h":"396","f":2},
+{"id":"5.32","a":5,"age":"9-12","lo":9.0,"hi":12.0,"s":"Extends toy to show others, not for release","h":"397"},
+{"id":"5.33","a":5,"age":"9-12","lo":9.0,"hi":12.0,"s":"Tests parental reactions during feeding","h":"398","f":2},
+{"id":"5.34","a":5,"age":"9-12","lo":9.0,"hi":12.0,"s":"Tests parental reactions at bedtime","h":"399","f":2},
+{"id":"5.35","a":5,"age":"9-12","lo":9.0,"hi":12.0,"s":"Engages in simple imitative play","h":"400"},
+{"id":"5.36","a":5,"age":"9-12","lo":9.0,"hi":12.0,"s":"Explores environment enthusiastically — safety precautions important","h":"401"},
+{"id":"5.37","a":5,"age":"12-13","lo":12.0,"hi":13.0,"s":"Likes to be in constant sight and hearing of adult","h":"402"},
+{"id":"5.38","a":5,"age":"12-15","lo":12.0,"hi":15.0,"s":"Gives toy to familiar adult spontaneously and upon request","h":"403"},
+{"id":"5.39","a":5,"age":"12-15","lo":12.0,"hi":15.0,"s":"Displays independent behavior; is difficult to discipline — the \"no\" stage","h":"404"},
+{"id":"5.40","a":5,"age":"12-15","lo":12.0,"hi":15.0,"s":"Acts impulsively, unable to recognize rules","h":"406","f":2},
+{"id":"5.41","a":5,"age":"12-15","lo":12.0,"hi":15.0,"s":"Attempts self-direction; resists adult control","h":"407"},
+{"id":"5.42","a":5,"age":"12-18","lo":12.0,"hi":18.0,"s":"Displays frequent tantrum behaviors","h":"408","f":2},
+{"id":"5.43","a":5,"age":"12-18","lo":12.0,"hi":18.0,"s":"Needs and expects rituals and routines","h":"412"},
+{"id":"5.44","a":5,"age":"12-18","lo":12.0,"hi":18.0,"s":"Begins to show a sense of humor — laugh at incongruities","h":"413"},
+{"id":"5.45","a":5,"age":"12-18","lo":12.0,"hi":18.0,"s":"Enjoys imitating adult behavior: responds well to the introduction of new tasks","h":"414"},
+{"id":"5.46","a":5,"age":"12-15","lo":12.0,"hi":15.0,"s":"Plays ball cooperatively","h":"415"},
+{"id":"5.47","a":5,"age":"12-18","lo":12.0,"hi":18.0,"s":"Shows toy preferences","h":"416"},
+{"id":"5.48","a":5,"age":"12-15","lo":12.0,"hi":15.0,"s":"Displays distractible behavior","h":"417"},
+{"id":"5.49","a":5,"age":"12-18","lo":12.0,"hi":18.0,"s":"Tends to be quite messy","h":"418"},
+{"id":"5.50","a":5,"age":"12-18","lo":12.0,"hi":18.0,"s":"Enjoys being center of attention in family group","h":"419"},
+{"id":"5.51","a":5,"age":"14-15½","lo":14.0,"hi":15.5,"s":"Hugs and kisses parents","h":"420"},
+{"id":"5.52","a":5,"age":"15-18","lo":15.0,"hi":18.0,"s":"Imitates doing housework","h":"414"},
+{"id":"5.53","a":5,"age":"18-24","lo":18.0,"hi":24.0,"s":"Expresses affection","h":"420"},
+{"id":"5.54","a":5,"age":"18-24","lo":18.0,"hi":24.0,"s":"Shows jealousy at attention given to others, especially other family members","h":"421","f":2},
+{"id":"5.55","a":5,"age":"18-24","lo":18.0,"hi":24.0,"s":"Shows a wide variety of emotions: fear, anger, sympathy, modesty, guilt, embarrassment, anxiety, joy","h":"422"},
+{"id":"5.56","a":5,"age":"18-24","lo":18.0,"hi":24.0,"s":"Desires control of others — orders, fights, resists","h":"423"},
+{"id":"5.57","a":5,"age":"18-24","lo":18.0,"hi":24.0,"s":"Feels easily frustrated","h":"424","f":2},
+{"id":"5.58","a":5,"age":"18-24","lo":18.0,"hi":24.0,"s":"Interacts with peers using gestures","h":"425"},
+{"id":"5.59","a":5,"age":"18-24","lo":18.0,"hi":24.0,"s":"Engages in parallel play","h":"425"},
+{"id":"5.60","a":5,"age":"18-24","lo":18.0,"hi":24.0,"s":"Enjoys solitary play coloring, building, looking at picture books for a few minutes","h":"426"},
+{"id":"5.61","a":5,"age":"18-24","lo":18.0,"hi":24.0,"s":"Enjoys rough-and-tumble play","h":"427"},
+{"id":"5.62","a":5,"age":"18-24","lo":18.0,"hi":24.0,"s":"Experiences a strong sense of self-importance","h":"428","f":1},
+{"id":"5.63","a":5,"age":"22-24","lo":22.0,"hi":24.0,"s":"Attempts to comfort others in distress","h":"429"},
+{"id":"5.64","a":5,"age":"?-24","lo":null,"hi":24.0,"s":"Defends possessions","h":"430"},
+{"id":"5.65","a":5,"age":"24-36","lo":24.0,"hi":36.0,"s":"Distinguishes self as a separate person; contrasts self with others","h":"431"},
+{"id":"5.66","a":5,"age":"24-30","lo":24.0,"hi":30.0,"s":"Displays shyness with strangers and in outside situations","h":"432","f":2},
+{"id":"5.67","a":5,"age":"24-30","lo":24.0,"hi":30.0,"s":"Holds parent's hand outdoors","h":"433"},
+{"id":"5.68","a":5,"age":"24-36","lo":24.0,"hi":36.0,"s":"Feels strongly possessive of loved ones","h":"433"},
+{"id":"5.69","a":5,"age":"24-30","lo":24.0,"hi":30.0,"s":"Displays dependent behavior; clings and whines","h":"433","f":2},
+{"id":"5.70","a":5,"age":"24-36","lo":24.0,"hi":36.0,"s":"Enjoys a wide range of relationships; meets more people","h":"434"},
+{"id":"5.71","a":5,"age":"24-30","lo":24.0,"hi":30.0,"s":"Says \"no,\" but submits anyway","h":"435"},
+{"id":"5.72","a":5,"age":"24-30","lo":24.0,"hi":30.0,"s":"Tends to be physically aggressive","h":"436","f":2},
+{"id":"5.73","a":5,"age":"24-30","lo":24.0,"hi":30.0,"s":"Enjoys experimenting with adult activities","h":"?"},
+{"id":"5.74","a":5,"age":"24-30","lo":24.0,"hi":30.0,"s":"Frustration tantrums peak","h":"438","f":2},
+{"id":"5.75","a":5,"age":"24-36","lo":24.0,"hi":36.0,"s":"Relates best to one familiar adult at a time","h":"439"},
+{"id":"5.76","a":5,"age":"24-36","lo":24.0,"hi":36.0,"s":"Engages best in peer interactions with just one older child, not a sibling","h":"439"},
+{"id":"5.77","a":5,"age":"24-30","lo":24.0,"hi":30.0,"s":"Dramatizes using a doll","h":"440"},
+{"id":"5.78","a":5,"age":"24-36","lo":24.0,"hi":36.0,"s":"Initiates own play, but requires supervision to carry out ideas","h":"441"},
+{"id":"5.79","a":5,"age":"24-30","lo":24.0,"hi":30.0,"s":"Fatigues easily","h":"442","f":2},
+{"id":"5.80","a":5,"age":"24-30","lo":24.0,"hi":30.0,"s":"Dawdles and procrastinates","h":"443","f":2},
+{"id":"5.81","a":5,"age":"24-30","lo":24.0,"hi":30.0,"s":"Values own property; uses word \"mine\"","h":"444"},
+{"id":"5.82","a":5,"age":"24-30","lo":24.0,"hi":30.0,"s":"Takes pride in clothing","h":"445"},
+{"id":"5.83","a":5,"age":"24-30","lo":24.0,"hi":30.0,"s":"Becoming aware of sex differences","h":"446"},
+{"id":"5.84","a":5,"age":"24-30","lo":24.0,"hi":30.0,"s":"May develop sudden fears, especially of large animals","h":"447","f":2},
+{"id":"5.85","a":5,"age":"30-36","lo":30.0,"hi":36.0,"s":"Separates easily from mother in familiar surroundings","h":"448"},
+{"id":"5.86","a":5,"age":"30-36","lo":30.0,"hi":36.0,"s":"Shows independence; runs ahead of mother outdoors, refuses to have hand held","h":"449"},
+{"id":"5.87","a":5,"age":"30-36","lo":30.0,"hi":36.0,"s":"Demonstrates extreme emotional shifts and paradoxical responses","h":"450","f":2},
+{"id":"5.88","a":5,"age":"30+","lo":30.0,"hi":null,"s":"Begins to obey and respect simple rules","h":"449"},
+{"id":"5.89","a":5,"age":"30-36","lo":30.0,"hi":36.0,"s":"Tends to be dictatorial and demanding","h":"451","f":2},
+{"id":"5.90","a":5,"age":"30-36","lo":30.0,"hi":36.0,"s":"Talks with a loud, urgent voice","h":"451","f":2},
+{"id":"5.91","a":5,"age":"30-36","lo":30.0,"hi":36.0,"s":"Resists change; is extremely ritualistic","h":"412","f":2},
+{"id":"5.92","a":5,"age":"30-36","lo":30.0,"hi":36.0,"s":"Experiences difficulty with transitions","h":"452","f":2},
+{"id":"5.93","a":5,"age":"30+","lo":30.0,"hi":null,"s":"Participates in circle games; plays interactive games","h":"453"},
+{"id":"5.94","a":5,"age":"30-36","lo":30.0,"hi":36.0,"s":"Takes pride in own achievements; resists help","h":"454"},
+{"id":"6.01","a":6,"age":"0-1","lo":0.0,"hi":1.0,"s":"Opens and closes mouth in response to food stimulus","h":"455"},
+{"id":"6.02","a":6,"age":"1-5","lo":1.0,"hi":5.0,"s":"Coordinates sucking, swallowing, and breathing","h":"457","f":2},
+{"id":"6.03","a":6,"age":"1-3","lo":1.0,"hi":3.0,"s":"Sleeps nights four-ten hour intervals","h":"459"},
+{"id":"6.04","a":6,"age":"1-3","lo":1.0,"hi":3.0,"s":"Stays awake for longer periods without crying — usually in p.m.","h":"459"},
+{"id":"6.05","a":6,"age":"1-3","lo":1.0,"hi":3.0,"s":"Naps frequently","h":"459","f":2},
+{"id":"6.06","a":6,"age":"2-5","lo":2.0,"hi":5.0,"s":"Suck and swallow reflex inhibited","h":"457","f":1},
+{"id":"6.07","a":6,"age":"2-4","lo":2.0,"hi":4.0,"s":"Brings hand to mouth","h":"460"},
+{"id":"6.08","a":6,"age":"3-6","lo":3.0,"hi":6.0,"s":"Swallows strained or pureed foods","h":"461"},
+{"id":"6.09","a":6,"age":"3-5","lo":3.0,"hi":5.0,"s":"Brings hand to mouth with toy or object","h":"16"},
+{"id":"6.10","a":6,"age":"3½-4½","lo":3.5,"hi":4.5,"s":"Recognizes bottle visually","h":"463"},
+{"id":"6.11","a":6,"age":"4-8½","lo":4.0,"hi":8.5,"s":"Uses tongue to move food in mouth","h":"464"},
+{"id":"6.12","a":6,"age":"4-6","lo":4.0,"hi":6.0,"s":"Rooting reflex inhibited","h":"465","f":1},
+{"id":"6.13","a":6,"age":"4-5","lo":4.0,"hi":5.0,"s":"Pats bottle","h":"466"},
+{"id":"6.14","a":6,"age":"4-8","lo":4.0,"hi":8.0,"s":"Sleeps nights ten-twelve hours with night awakening","h":"467","f":2},
+{"id":"6.15","a":6,"age":"4-8","lo":4.0,"hi":8.0,"s":"Naps two-three times each day one-four hours","h":"467","f":2},
+{"id":"6.16","a":6,"age":"4½-5½","lo":4.5,"hi":5.5,"s":"Places both hands on bottle","h":"466"},
+{"id":"6.17","a":6,"age":"5-8","lo":5.0,"hi":8.0,"s":"Mouths and gums solid foods","h":"468"},
+{"id":"6.18","a":6,"age":"5½-9","lo":5.5,"hi":9.0,"s":"Holds own bottle","h":"469"},
+{"id":"6.19","a":6,"age":"6-8","lo":6.0,"hi":8.0,"s":"Bites food voluntarily","h":"470","f":1},
+{"id":"6.20","a":6,"age":"6-12","lo":6.0,"hi":12.0,"s":"Drinks from cup held for him","h":"472"},
+{"id":"6.21","a":6,"age":"6½-8½","lo":6.5,"hi":8.5,"s":"Feeds self a cracker","h":"470"},
+{"id":"6.22","a":6,"age":"7-8","lo":7.0,"hi":8.0,"s":"Bites and chews toys","h":"470"},
+{"id":"6.23","a":6,"age":"7-12","lo":7.0,"hi":12.0,"s":"Drools less except when teething","h":"474","f":2},
+{"id":"6.24","a":6,"age":"8-13½","lo":8.0,"hi":13.5,"s":"Chews food with munching pattern","h":"475","f":1},
+{"id":"6.25","a":6,"age":"9-12","lo":9.0,"hi":12.0,"s":"Finger feeds self","h":"476"},
+{"id":"6.26","a":6,"age":"9-12","lo":9.0,"hi":12.0,"s":"Holds spoon","h":"477"},
+{"id":"6.27","a":6,"age":"9-12","lo":9.0,"hi":12.0,"s":"Sleeps nights twelve-fourteen hours","h":"467","f":2},
+{"id":"6.28","a":6,"age":"9-12","lo":9.0,"hi":12.0,"s":"Naps once or twice each day one-four hours, may refuse morning nap","h":"467","f":2},
+{"id":"6.29","a":6,"age":"10½-12","lo":10.5,"hi":12.0,"s":"Cooperates with dressing by extending arm or leg","h":"478"},
+{"id":"6.30","a":6,"age":"12-18","lo":12.0,"hi":18.0,"s":"May refuse foods — appetite decreases","h":"479","f":2},
+{"id":"6.31","a":6,"age":"12-15","lo":12.0,"hi":15.0,"s":"Brings spoon to mouth — turns spoon over","h":"480"},
+{"id":"6.32","a":6,"age":"12-18","lo":12.0,"hi":18.0,"s":"Holds and drinks from cup with some spilling","h":"481"},
+{"id":"6.33","a":6,"age":"12-15½","lo":12.0,"hi":15.5,"s":"Holds cup handle","h":"481"},
+{"id":"6.34","a":6,"age":"12-18","lo":12.0,"hi":18.0,"s":"Shows bladder and bowel control pattern","h":"482"},
+{"id":"6.35","a":6,"age":"12-18","lo":12.0,"hi":18.0,"s":"Indicates discomfort over soiled pants verbally or by gesture","h":"482"},
+{"id":"6.36","a":6,"age":"13-18","lo":13.0,"hi":18.0,"s":"Sleeps nights ten-twelve hours","h":"483","f":2},
+{"id":"6.37","a":6,"age":"13-18","lo":13.0,"hi":18.0,"s":"Naps once in afternoon one-three hours","h":"483","f":2},
+{"id":"6.38","a":6,"age":"15-24","lo":15.0,"hi":24.0,"s":"Scoops food, feeds self with spoon with some spilling","h":"484"},
+{"id":"6.39","a":6,"age":"15-18","lo":15.0,"hi":18.0,"s":"Removes socks","h":"485"},
+{"id":"6.40","a":6,"age":"15-16½","lo":15.0,"hi":16.5,"s":"Removes hat","h":"486"},
+{"id":"6.41","a":6,"age":"16½-18½","lo":16.5,"hi":18.5,"s":"Places hat on head","h":"486"},
+{"id":"6.42","a":6,"age":"18-19","lo":18.0,"hi":19.0,"s":"Gives empty dish to adult","h":"487"},
+{"id":"6.43","a":6,"age":"18-23","lo":18.0,"hi":23.0,"s":"Distinguishes between edible and inedible objects","h":"488"},
+{"id":"6.44","a":6,"age":"18-24","lo":18.0,"hi":24.0,"s":"Chews completely with rotary jaw movements","h":"489","f":1},
+{"id":"6.45","a":6,"age":"18-24","lo":18.0,"hi":24.0,"s":"Gives up bottle","h":"490"},
+{"id":"6.46","a":6,"age":"18-24","lo":18.0,"hi":24.0,"s":"Removes shoes when laces undone","h":"491"},
+{"id":"6.47","a":6,"age":"18-21","lo":18.0,"hi":21.0,"s":"Unzips, zips large zipper","h":"492"},
+{"id":"6.48","a":6,"age":"18-24","lo":18.0,"hi":24.0,"s":"Sits on potty chair or on adaptive seat on toilet with assistance","h":"493"},
+{"id":"6.49","a":6,"age":"18-24","lo":18.0,"hi":24.0,"s":"May be toilet regulated by adult","h":"495"},
+{"id":"6.50","a":6,"age":"19-23","lo":19.0,"hi":23.0,"s":"Plays with food","h":"496","f":2},
+{"id":"6.51","a":6,"age":"19-24","lo":19.0,"hi":24.0,"s":"Washes and dries hands partially","h":"497"},
+{"id":"6.52","a":6,"age":"?-24","lo":null,"hi":24.0,"s":"Anticipates need to eliminate — uses same word for both functions","h":"493"},
+{"id":"6.53","a":6,"age":"19-31","lo":19.0,"hi":31.0,"s":"Delays sleeping by demanding things","h":"498","f":2},
+{"id":"6.54","a":6,"age":"20-30","lo":20.0,"hi":30.0,"s":"Holds small cup in one hand","h":"499"},
+{"id":"6.55","a":6,"age":"21-23","lo":21.0,"hi":23.0,"s":"Opens doors by turning knob","h":"500"},
+{"id":"6.56","a":6,"age":"21-23","lo":21.0,"hi":23.0,"s":"Helps with simple household tasks","h":"501"},
+{"id":"6.57","a":6,"age":"21-30","lo":21.0,"hi":30.0,"s":"Puts shoes on with assistance","h":"502"},
+{"id":"6.58","a":6,"age":"23-25","lo":23.0,"hi":25.0,"s":"May have definite food preferences","h":"503","f":2},
+{"id":"6.59","a":6,"age":"23-25","lo":23.0,"hi":25.0,"s":"Unwraps food","h":"504"},
+{"id":"6.60","a":6,"age":"24-30","lo":24.0,"hi":30.0,"s":"Understands and stays away from common dangers — stairs, glass, strange animals","h":"505"},
+{"id":"6.61","a":6,"age":"24-26","lo":24.0,"hi":26.0,"s":"Handles fragile items carefully","h":"506"},
+{"id":"6.62","a":6,"age":"24-29½","lo":24.0,"hi":29.5,"s":"Helps put things away","h":"501"},
+{"id":"6.63","a":6,"age":"24-30","lo":24.0,"hi":30.0,"s":"Holds spoon in fingers — palm up","h":"508","f":1},
+{"id":"6.64","a":6,"age":"24-26","lo":24.0,"hi":26.0,"s":"Pulls pants down with assistance","h":"509"},
+{"id":"6.65","a":6,"age":"24-25","lo":24.0,"hi":25.0,"s":"Unbuttons large buttons","h":"510"},
+{"id":"6.66","a":6,"age":"24-30","lo":24.0,"hi":30.0,"s":"Washes hands","h":"511"},
+{"id":"6.67","a":6,"age":"24+","lo":24.0,"hi":null,"s":"Brushes teeth with assistance","h":"512"},
+{"id":"6.68","a":6,"age":"24-36","lo":24.0,"hi":36.0,"s":"Anticipates need to eliminate in time","h":"514"},
+{"id":"6.69","a":6,"age":"24-36","lo":24.0,"hi":36.0,"s":"Uses toilet with assistance — has daytime control","h":"514"},
+{"id":"6.70","a":6,"age":"26-32","lo":26.0,"hi":32.0,"s":"Undresses with assistance","h":"515"},
+{"id":"6.71","a":6,"age":"26-28","lo":26.0,"hi":28.0,"s":"Pulls pants up with assistance","h":"516"},
+{"id":"6.72","a":6,"age":"28-32","lo":28.0,"hi":32.0,"s":"Dresses self with assistance","h":"517"},
+{"id":"6.73","a":6,"age":"29-31","lo":29.0,"hi":31.0,"s":"Wipes nose with assistance","h":"519"},
+{"id":"6.74","a":6,"age":"29½-31½","lo":29.5,"hi":31.5,"s":"May reject many foods","h":"503","f":2},
+{"id":"6.75","a":6,"age":"30+","lo":30.0,"hi":null,"s":"Insists on doing things independently","h":"454"},
+{"id":"6.76","a":6,"age":"30-36","lo":30.0,"hi":36.0,"s":"Knows proper place for own things","h":"507"},
+{"id":"6.77","a":6,"age":"30-36","lo":30.0,"hi":36.0,"s":"Pours liquid from small container","h":"520"},
+{"id":"6.78","a":6,"age":"30-36","lo":30.0,"hi":36.0,"s":"Uses fork","h":"521"},
+{"id":"6.79","a":6,"age":"30-36","lo":30.0,"hi":36.0,"s":"Uses napkin","h":"522"},
+{"id":"6.80","a":6,"age":"30+","lo":30.0,"hi":null,"s":"Hangs clothing on hook","h":"507"},
+{"id":"6.81","a":6,"age":"30-36","lo":30.0,"hi":36.0,"s":"Buttons large buttons","h":"523"},
+{"id":"6.82","a":6,"age":"30-36","lo":30.0,"hi":36.0,"s":"Dries hands","h":"511"},
+{"id":"6.83","a":6,"age":"30+","lo":30.0,"hi":null,"s":"Helps with bathing self","h":"524"},
+{"id":"6.84","a":6,"age":"30-36","lo":30.0,"hi":36.0,"s":"Distinguishes between urination and bowel movements","h":"514"},
+{"id":"6.85","a":6,"age":"31+","lo":31.0,"hi":null,"s":"Serves self at table with little spilling","h":"522"},
+{"id":"6.86","a":6,"age":"31+","lo":31.0,"hi":null,"s":"Shows interest in setting table","h":"522"},
+{"id":"6.87","a":6,"age":"31+","lo":31.0,"hi":null,"s":"Verbalizes need to use toilet — has occasional accidents","h":"514"},
+{"id":"6.88","a":6,"age":"31+","lo":31.0,"hi":null,"s":"Takes responsibility for toileting; requires assistance in wiping","h":"525"},
+{"id":"6.89","a":6,"age":"31+","lo":31.0,"hi":null,"s":"Sleeps ten-fifteen hours daily","h":"526","f":2},
+{"id":"6.90","a":6,"age":"31+","lo":31.0,"hi":null,"s":"May awaken, crying from dreams","h":"526","f":2},
+{"id":"6.91","a":6,"age":"31+","lo":31.0,"hi":null,"s":"May eliminate naps","h":"526","f":2},
+{"id":"6.92","a":6,"age":"32+","lo":32.0,"hi":null,"s":"Dresses with supervision, requires assistance with fastenings","h":"527"},
+{"id":"6.93","a":6,"age":"32-34","lo":32.0,"hi":34.0,"s":"Blows nose with assistance","h":"519"}
+];
+
+const AREAS = {
+  1:"Cognitive", 2:"Expressive Language", 3:"Gross Motor",
+  4:"Fine Motor", 5:"Social-Emotional", 6:"Self Help"
+};
+
+/* Footnote text quoted from the HELP Checklist, page 2. */
+const FOOTNOTES = {
+  1:"Additional information and definitions of skills may be obtained by referring to the Guide.",
+  2:"Refers to skills that should not be taught although they do relate to behaviors typical of the child's age, i.e., they occur as a natural part of the child's development."
+};
+
+const STATUSES = [
+  {key:"notyet",   label:"Not yet"},
+  {key:"emerging", label:"Emerging"},
+  {key:"mastered", label:"Mastered"}
+];
+
+/* ---------------- storage (this device only) ---------------- */
+const KEY = "help-tracker-v1";
+let db = {child:{name:"", birthdate:"", ageMonths:null}, rec:{}};
+
+function load(){
+  try{
+    const raw = localStorage.getItem(KEY);
+    if(raw){
+      const p = JSON.parse(raw);
+      db = {child:Object.assign({name:"",birthdate:"",ageMonths:null}, p.child||{}), rec:p.rec||{}};
+    }
+  }catch(e){ /* private mode / blocked storage: run with empty data */ }
+}
+function save(){
+  try{ localStorage.setItem(KEY, JSON.stringify(db)); }
+  catch(e){ /* storage unavailable; changes stay for this session only */ }
+}
+function rec(id){
+  if(!db.rec[id]) db.rec[id] = {status:"", date:"", notes:"", ideas:[]};
+  return db.rec[id];
+}
+
+/* ---------------- age ---------------- */
+function ageMonths(){
+  if(db.child.birthdate){
+    const b = new Date(db.child.birthdate + "T00:00:00");
+    if(!isNaN(b)){
+      const n = new Date();
+      let m = (n.getFullYear()-b.getFullYear())*12 + (n.getMonth()-b.getMonth());
+      if(n.getDate() < b.getDate()) m -= 1;
+      const anchor = new Date(b.getFullYear(), b.getMonth()+m, b.getDate());
+      const nextm  = new Date(b.getFullYear(), b.getMonth()+m+1, b.getDate());
+      const frac = (n - anchor) / (nextm - anchor);
+      return Math.max(0, m + (isFinite(frac) ? frac : 0));
+    }
+  }
+  if(db.child.ageMonths != null && db.child.ageMonths !== "") return Number(db.child.ageMonths);
+  return null;
+}
+function ageLabel(){
+  const m = ageMonths();
+  if(m == null) return "Set age";
+  const whole = Math.floor(m);
+  const y = Math.floor(whole/12), r = whole%12;
+  const yr = y ? y + (y===1?" yr ":" yrs ") : "";
+  return whole + " mo" + (y ? " (" + yr + r + " mo)" : "");
+}
+
+/* ---------------- classification ---------------- */
+/* An item is "past its age band" when the child is older than the top of
+   the printed range. Items printed open-ended (e.g. "33+") never expire. */
+function pastBand(it, m){ return m != null && it.hi != null && m > it.hi; }
+
+function bucket(it, m){
+  const st = (db.rec[it.id] || {}).status || "";
+  if(!pastBand(it, m)) return null;
+  if(it.f) return "footnoted";               // book says these are not skills to teach
+  if(st === "notyet" || st === "emerging") return "attention";
+  if(st === "") return "check";
+  return null;                                // mastered
+}
+
+function esc(s){
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function fmtDate(iso){
+  if(!iso) return "";
+  const d = new Date(iso + "T00:00:00");
+  if(isNaN(d)) return iso;
+  return d.toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"});
+}
+function today(){
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+}
+function hahLabel(h){
+  if(h === "n/a") return "no handout listed";
+  if(h === "?")   return "page unreadable in your copy";
+  return "HELP…at Home p. " + h;
+}
+
+/* ---------------- rendering: one item row ---------------- */
+function itemRow(it, m){
+  const r  = db.rec[it.id] || {status:"",date:"",notes:"",ideas:[]};
+  const st = r.status || "";
+  const tags = [];
+  tags.push('<span class="tag">' + esc(it.age) + ' mo</span>');
+  tags.push('<span class="tag book">' + esc(hahLabel(it.h)) + '</span>');
+  if(it.f) tags.push('<span class="tag warn">footnote ' + it.f + '</span>');
+  if(pastBand(it, m) && !it.f && (st === "notyet" || st === "emerging")) tags.push('<span class="tag warn">past age band</span>');
+  if(r.date) tags.push('<span class="tag">' + esc(fmtDate(r.date)) + '</span>');
+
+  const ideas = (r.ideas || []).map((t,i) =>
+    '<li><span>' + esc(t) + '</span><button type="button" data-del-idea="' + i + '" aria-label="Remove idea">&times;</button></li>'
+  ).join("");
+
+  return '<li class="item" data-id="' + it.id + '">' +
+    '<button class="item-head" type="button" data-toggle>' +
+      '<span class="dot ' + st + '"></span>' +
+      '<span class="item-main">' +
+        '<span class="item-skill">' + esc(it.s) + '</span>' +
+        '<span class="item-meta">' +
+          '<span class="tag">' + it.id + '</span>' + tags.join("") +
+        '</span>' +
+      '</span>' +
+    '</button>' +
+    '<div class="item-body">' +
+      '<div class="statusrow">' +
+        STATUSES.map(s =>
+          '<button type="button" class="' + s.key + '" data-status="' + s.key + '" aria-pressed="' + (st===s.key) + '">' + s.label + '</button>'
+        ).join("") +
+      '</div>' +
+      (st ? '<button type="button" class="btn ghost small" data-status="">Clear mark</button>' : '') +
+      (it.f ? '<p class="small muted" style="margin-top:10px"><b>Footnote ' + it.f + ':</b> ' + esc(FOOTNOTES[it.f]) + '</p>' : '') +
+      '<label class="field"><span>Notes</span><textarea data-notes placeholder="What you saw, when, in what setting">' + esc(r.notes || "") + '</textarea></label>' +
+      '<label class="field"><span>My activity ideas</span></label>' +
+      '<ul class="ideas">' + ideas + '</ul>' +
+      '<div class="addrow"><input type="text" data-idea placeholder="Add an idea" /><button type="button" class="btn" data-add-idea>Add</button></div>' +
+    '</div>' +
+  '</li>';
+}
+
+/* ---------------- view: Focus ---------------- */
+function renderFocus(){
+  const m = ageMonths();
+  const el = document.getElementById("view-focus");
+
+  if(m == null){
+    el.innerHTML =
+      '<div class="card">' +
+        '<h2>Start here</h2>' +
+        '<p class="sub">Enter her age so the app can tell which skills have gone past their age band. Nothing you type leaves this device.</p>' +
+        '<button type="button" class="btn wide" data-goto="setup">Go to Setup</button>' +
+      '</div>';
+    return;
+  }
+
+  const attention = [], check = [], footnoted = [];
+  let assessed = 0, mastered = 0;
+  for(const it of ITEMS){
+    const st = (db.rec[it.id] || {}).status || "";
+    if(st) assessed++;
+    if(st === "mastered") mastered++;
+    const b = bucket(it, m);
+    if(b === "attention") attention.push(it);
+    else if(b === "check") check.push(it);
+    else if(b === "footnoted" && st !== "mastered") footnoted.push(it);
+  }
+
+  attention.sort((a, b) => a.hi - b.hi);   // earliest gap first: you teach from where she is
+
+  const pct = Math.round(mastered / ITEMS.length * 100);
+  let html =
+    '<div class="card">' +
+      '<h2>' + (db.child.name ? esc(db.child.name) : "Progress") + '</h2>' +
+      '<p class="sub">' + esc(ageLabel()) + ' &middot; ' + ITEMS.length + ' HELP skills, birth to three years</p>' +
+      '<div class="stats">' +
+        '<div class="stat"><b>' + mastered + '</b><span>MASTERED</span></div>' +
+        '<div class="stat"><b>' + assessed + '</b><span>MARKED</span></div>' +
+        '<div class="stat"><b>' + attention.length + '</b><span>NEED WORK</span></div>' +
+      '</div>' +
+      '<div class="bar"><i style="width:' + pct + '%"></i></div>' +
+    '</div>';
+
+  html += '<div class="sectionlabel">Needs attention &middot; ' + attention.length + '</div>';
+  if(attention.length){
+    html += '<div class="note" style="margin-bottom:10px">Past her age band and marked Not yet or Emerging. Your checklist’s planning guideline reads: &ldquo;Skills which are assessed as &minus; or E can be targeted for intervention unless they have a footnote.&rdquo;</div>';
+    html += '<ul class="items">' + attention.map(it => itemRow(it, m)).join("") + '</ul>';
+  }else{
+    html += '<div class="card"><div class="empty">Nothing flagged. Skills you mark Not yet or Emerging show up here once she passes the top of their age range.</div></div>';
+  }
+
+  if(check.length){
+    check.sort((a, b) => b.hi - a.hi);   // closest to her age first
+    html += '<div class="sectionlabel">Worth checking &middot; ' + check.length + '</div>' +
+            '<div class="note" style="margin-bottom:10px">Past her age band but not marked yet, so the app can’t tell where she stands. Closest to her age first.</div>' +
+            '<ul class="items">' + check.slice(0,40).map(it => itemRow(it, m)).join("") + '</ul>' +
+            (check.length > 40 ? '<p class="small muted">Showing 40 of ' + check.length + '. The rest are in the Skills tab under the Unmarked filter.</p>' : '');
+  }
+
+  if(footnoted.length){
+    html += '<details class="foot"><summary>' + footnoted.length + ' footnoted skills are past her age band and are held back from the list above</summary><div>' +
+      '<p class="small muted">The checklist says footnoted items are not skills to teach &mdash; they are there for evaluation and anticipatory guidance. They are kept out of &ldquo;Needs attention&rdquo; for that reason.</p>' +
+      '<ul class="items">' + footnoted.map(it => itemRow(it, m)).join("") + '</ul></div></details>';
+  }
+
+  el.innerHTML = html;
+}
+
+/* ---------------- view: Skills ---------------- */
+let fArea = 0, fStatus = "all", fQuery = "";
+
+function renderSkills(){
+  const m = ageMonths();
+  const el = document.getElementById("view-skills");
+
+  const areaChips = ['<button type="button" class="chip" data-area="0" aria-pressed="' + (fArea===0) + '">All</button>']
+    .concat(Object.keys(AREAS).map(k =>
+      '<button type="button" class="chip" data-area="' + k + '" aria-pressed="' + (fArea==k) + '">' + AREAS[k] + '</button>'
+    )).join("");
+
+  const statusChips = [["all","All"],["notyet","Not yet"],["emerging","Emerging"],["mastered","Mastered"],["none","Unmarked"],["attention","Needs attention"]]
+    .map(([k,l]) => '<button type="button" class="chip" data-status-filter="' + k + '" aria-pressed="' + (fStatus===k) + '">' + l + '</button>').join("");
+
+  const q = fQuery.trim().toLowerCase();
+  const list = ITEMS.filter(it => {
+    if(fArea && it.a != fArea) return false;
+    const st = (db.rec[it.id] || {}).status || "";
+    if(fStatus === "none" && st) return false;
+    if(fStatus === "attention" && bucket(it, m) !== "attention") return false;
+    if(["notyet","emerging","mastered"].includes(fStatus) && st !== fStatus) return false;
+    if(q && !(it.s.toLowerCase().includes(q) || it.id.includes(q))) return false;
+    return true;
+  });
+
+  el.innerHTML =
+    '<div class="card">' +
+      '<div class="filters">' + areaChips + '</div>' +
+      '<div class="filters">' + statusChips + '</div>' +
+      '<input type="text" id="q" placeholder="Search skills or item number" value="' + esc(fQuery) + '" />' +
+      '<p class="sub" style="margin:8px 0 0">' + list.length + ' of ' + ITEMS.length + ' skills</p>' +
+    '</div>' +
+    (list.length
+      ? '<ul class="items">' + list.map(it => itemRow(it, m)).join("") + '</ul>'
+      : '<div class="card"><div class="empty">No skills match those filters.</div></div>');
+}
+
+/* ---------------- view: Setup ---------------- */
+function renderSetup(){
+  const el = document.getElementById("view-setup");
+  el.innerHTML =
+    '<div class="card">' +
+      '<h2>Her details</h2>' +
+      '<p class="sub">Stored in this browser, on this device. Never sent anywhere.</p>' +
+      '<label class="field"><span>Name or nickname (optional)</span><input type="text" id="c-name" value="' + esc(db.child.name || "") + '" placeholder="Shown at the top of Focus" /></label>' +
+      '<label class="field"><span>Birthdate &mdash; age updates itself</span><input type="date" id="c-bd" value="' + esc(db.child.birthdate || "") + '" /></label>' +
+      '<label class="field"><span>Or just age in months</span><input type="number" id="c-am" min="0" max="60" step="1" value="' + esc(db.child.ageMonths == null ? "" : db.child.ageMonths) + '" placeholder="e.g. 28" /></label>' +
+      '<p class="small muted" style="margin-top:8px">Birthdate wins if you fill in both. Age in months is the option if you’d rather not store a date of birth.</p>' +
+    '</div>' +
+
+    '<div class="card">' +
+      '<h2>Backup</h2>' +
+      '<p class="sub">Your marks live only in this browser. Clearing site data or deleting the app loses them, so keep a backup file somewhere you trust.</p>' +
+      '<button type="button" class="btn wide" id="export">Save a backup file</button>' +
+      '<button type="button" class="btn ghost wide" id="copy">Copy backup to clipboard</button>' +
+      '<label class="field"><span>Restore &mdash; paste a backup here</span><textarea id="importbox" placeholder="Paste the contents of a backup file"></textarea></label>' +
+      '<button type="button" class="btn ghost wide" id="import">Restore from pasted backup</button>' +
+    '</div>' +
+
+    '<div class="card">' +
+      '<h2>What the marks mean</h2>' +
+      '<p class="sub">This app uses plain words. Your paper checklist uses symbols &mdash; here is how they line up.</p>' +
+      '<dl class="legend">' +
+        '<dt>Mastered</dt><dd>Your checklist’s <b>+</b> &mdash; &ldquo;the skill was observed or appropriately absent.&rdquo;</dd>' +
+        '<dt>Emerging</dt><dd>Your checklist’s <b>E</b> &mdash; &ldquo;the skill appears to be emerging but not complete, consistent, or of good quality.&rdquo;</dd>' +
+        '<dt>Not yet</dt><dd>Your checklist’s <b>&minus;</b> &mdash; &ldquo;the skill was assessed but not observed or reported.&rdquo;</dd>' +
+        '<dt>Unmarked</dt><dd>Left blank, as on paper: not assessed.</dd>' +
+      '</dl>' +
+      '<p class="small muted" style="margin-top:10px">The paper checklist also has <b>R</b>, &ldquo;the skill was reported by parent.&rdquo; There is no separate button for it here &mdash; note it in the Notes box if you need the distinction.</p>' +
+    '</div>' +
+
+    '<div class="card">' +
+      '<h2>Where the skills came from</h2>' +
+      '<p class="sub">All 685 skills, age ranges, and page references were transcribed from your HELP Checklist (Hawaii Early Learning Profile), Birth to Three years, VORT Corporation. Activity ideas are only ever the ones you type in yourself.</p>' +
+      '<details class="foot"><summary>Fields I could not read in your scanned copy</summary><div class="small muted">' +
+        '<p>A few cells were hidden behind the PDF reader’s toolbar or under handwriting. Everything else came through clean. Worth filling in from the book:</p>' +
+        '<ul>' +
+          '<li>Age range, first number only: 1.45, 1.46, 1.133, 2.57, 3.44, 3.134, 4.76, 5.64, 6.52</li>' +
+          '<li>HELP…at Home page: 1.51, 2.32, 5.73</li>' +
+        '</ul>' +
+        '<p>The top of each age range is known in every case, so the &ldquo;past age band&rdquo; flag still works for all of them.</p>' +
+      '</div></details>' +
+    '</div>' +
+
+    '<div class="card">' +
+      '<h2>Privacy</h2>' +
+      '<p class="sub">This page makes no network requests of any kind. There are no external scripts, fonts, or images, no analytics, and no server. Everything you enter is held in this browser’s local storage and stays on this device.</p>' +
+    '</div>';
+}
+
+/* ---------------- routing ---------------- */
+let tab = "focus";
+function render(){
+  document.getElementById("agechip").textContent = ageLabel();
+  document.querySelectorAll("nav button").forEach(b =>
+    b.setAttribute("aria-current", String(b.dataset.tab === tab))
+  );
+  ["focus","skills","setup"].forEach(t =>
+    document.getElementById("view-" + t).hidden = (t !== tab)
+  );
+  if(tab === "focus") renderFocus();
+  if(tab === "skills") renderSkills();
+  if(tab === "setup") renderSetup();
+}
+function go(t){ tab = t; window.scrollTo(0,0); render(); }
+
+/* ---------------- events ---------------- */
+document.querySelector("nav").addEventListener("click", e => {
+  const b = e.target.closest("button[data-tab]");
+  if(b) go(b.dataset.tab);
+});
+document.getElementById("agechip").addEventListener("click", () => go("setup"));
+
+document.querySelector("main").addEventListener("click", e => {
+  const goto = e.target.closest("[data-goto]");
+  if(goto){ go(goto.dataset.goto); return; }
+
+  const areaBtn = e.target.closest("[data-area]");
+  if(areaBtn){ fArea = Number(areaBtn.dataset.area); renderSkills(); return; }
+
+  const stFilter = e.target.closest("[data-status-filter]");
+  if(stFilter){ fStatus = stFilter.dataset.statusFilter; renderSkills(); return; }
+
+  const li = e.target.closest("li.item");
+
+  if(e.target.closest("[data-toggle]")){ li.classList.toggle("open"); return; }
+  if(!li) return;
+  const id = li.dataset.id;
+
+  const stBtn = e.target.closest("[data-status]");
+  if(stBtn){
+    const r = rec(id);
+    const val = stBtn.dataset.status;
+    r.status = val;
+    r.date = val ? today() : "";
+    save();
+    const wasOpen = li.classList.contains("open");
+    render();
+    if(wasOpen){
+      const again = document.querySelector('li.item[data-id="' + id + '"]');
+      if(again) again.classList.add("open");
+    }
+    return;
+  }
+
+  const addIdea = e.target.closest("[data-add-idea]");
+  if(addIdea){
+    const input = li.querySelector("[data-idea]");
+    const txt = input.value.trim();
+    if(txt){
+      rec(id).ideas.push(txt);
+      save();
+      render();
+      const again = document.querySelector('li.item[data-id="' + id + '"]');
+      if(again){ again.classList.add("open"); again.querySelector("[data-idea]").focus(); }
+    }
+    return;
+  }
+
+  const delIdea = e.target.closest("[data-del-idea]");
+  if(delIdea){
+    rec(id).ideas.splice(Number(delIdea.dataset.delIdea), 1);
+    save();
+    render();
+    const again = document.querySelector('li.item[data-id="' + id + '"]');
+    if(again) again.classList.add("open");
+    return;
+  }
+});
+
+document.querySelector("main").addEventListener("input", e => {
+  if(e.target.id === "q"){ fQuery = e.target.value; renderSkills();
+    const box = document.getElementById("q");
+    if(box){ box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
+    return; }
+  if(e.target.matches("[data-notes]")){
+    const li = e.target.closest("li.item");
+    rec(li.dataset.id).notes = e.target.value;
+    save();
+    return;
+  }
+  if(e.target.id === "c-name"){ db.child.name = e.target.value; save(); return; }
+  if(e.target.id === "c-bd"){ db.child.birthdate = e.target.value; save(); document.getElementById("agechip").textContent = ageLabel(); return; }
+  if(e.target.id === "c-am"){ db.child.ageMonths = e.target.value === "" ? null : Number(e.target.value); save(); document.getElementById("agechip").textContent = ageLabel(); return; }
+});
+
+document.querySelector("main").addEventListener("click", e => {
+  if(e.target.id === "export"){
+    const blob = new Blob([JSON.stringify(db, null, 2)], {type:"application/json"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "help-tracker-backup-" + today() + ".json";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+  if(e.target.id === "copy"){
+    const txt = JSON.stringify(db, null, 2);
+    const done = () => { e.target.textContent = "Copied"; setTimeout(() => e.target.textContent = "Copy backup to clipboard", 1600); };
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(txt).then(done, () => alert(txt));
+    }else{ alert(txt); }
+  }
+  if(e.target.id === "import"){
+    const box = document.getElementById("importbox");
+    try{
+      const p = JSON.parse(box.value);
+      if(!p || typeof p !== "object" || !p.rec) throw new Error("not a backup");
+      if(confirm("Replace everything currently in the app with this backup?")){
+        db = {child:Object.assign({name:"",birthdate:"",ageMonths:null}, p.child||{}), rec:p.rec};
+        save(); box.value = ""; render();
+      }
+    }catch(err){ alert("That doesn't look like a backup file."); }
+  }
+});
+
+load();
+render();
+</script>
+</body>
+</html>
