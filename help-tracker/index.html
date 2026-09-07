@@ -7,6 +7,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-title" content="HELP Tracker" />
 <meta name="theme-color" content="#4f46e5" />
+<link rel="manifest" href="manifest.json" />
+<link rel="apple-touch-icon" href="icon.png" />
+<link rel="icon" href="icon.png" />
 <style>
   :root{
     --bg:#f8fafc; --card:#ffffff; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0;
@@ -1258,6 +1261,14 @@ document.querySelector("main").addEventListener("click", e => {
 
 load();
 render();
+
+/* Offline support when served over http(s). Opened straight from a file
+   there is no service worker, and the app works anyway - it is one file. */
+if("serviceWorker" in navigator && location.protocol.startsWith("http")){
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  });
+}
 </script>
 </body>
 </html>
