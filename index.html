@@ -21,9 +21,12 @@
 <body>
 <div id="root"></div>
 
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="./react.production.min.js"></script>
+<script>if (!window.React) document.write('<script src="https://unpkg.com/react@18/umd/react.production.min.js"><\/script>');</script>
+<script src="./react-dom.production.min.js"></script>
+<script>if (!window.ReactDOM) document.write('<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"><\/script>');</script>
+<script src="./babel.min.js"></script>
+<script>if (!window.Babel) document.write('<script src="https://unpkg.com/@babel/standalone/babel.min.js"><\/script>');</script>
 <script src="goalbank.js"></script>
 
 <script type="text/plain" id="app-source">
@@ -51,7 +54,7 @@ const DURATION_OPTIONS = [
   { label: "10m", seconds: 600 },
 ];
 
-const SUPPORT_CODES = ["ind", "sp", "f", "p", "oh", "s", "r", "g", "m", "im", "k"];
+const SUPPORT_CODES = ["ind", "sp", "f", "p", "oh", "s", "r", "g", "m", "im", "k", "m+d", "1m", "2m", "3m"];
 
 function formatTime(s) {
   const m = Math.floor(s / 60);
@@ -160,6 +163,10 @@ function newGoal() {
     sup: {},
     ctx: "",
     ctxData: { str: { c: 0, i: 0 }, unstr: { c: 0, i: 0 } },
+    supportOk: [],
+    biteTarget: 0,
+    biteCount: 0,
+    intervals: [],
     items: [],
     activeItem: 0,
     fullGoal: "",
@@ -189,6 +196,8 @@ function goalFromTemplate(t) {
     ruleN: typeof t.ruleN === "number" ? t.ruleN : 3,
     support: typeof t.support === "string" && t.support ? t.support : "ind",
     usedSupport: typeof t.support === "string" && t.support ? t.support : "ind",
+    supportOk: Array.isArray(t.supportOk) ? t.supportOk : [],
+    biteTarget: typeof t.biteTarget === "number" ? t.biteTarget : 0,
     items: (t.items || []).map(it => ({ name: typeof it === "string" ? it : String((it && it.name) || ""), correct: 0, incorrect: 0, att: false })),
     activeItem: 0,
   };
@@ -206,6 +215,8 @@ function templatesFromGoals(goals) {
     ruleMode: ["total", "opps", "across"].includes(g.ruleMode) ? g.ruleMode : "row",
     ruleN: typeof g.ruleN === "number" ? g.ruleN : 3,
     support: g.support || "ind",
+    supportOk: Array.isArray(g.supportOk) ? g.supportOk : [],
+    biteTarget: typeof g.biteTarget === "number" ? g.biteTarget : 0,
     items: (g.items || []).map(it => ({ name: it.name })),
   }));
 }
@@ -223,6 +234,10 @@ function normalizeGoalFields(g) {
     sup: (g.sup && typeof g.sup === "object" && !Array.isArray(g.sup)) ? g.sup : {},
     ctx: g.ctx === "str" || g.ctx === "unstr" ? g.ctx : "",
     ctxData: (g.ctxData && g.ctxData.str && g.ctxData.unstr) ? g.ctxData : { str: { c: 0, i: 0 }, unstr: { c: 0, i: 0 } },
+    supportOk: Array.isArray(g.supportOk) ? g.supportOk.filter(c => typeof c === "string") : [],
+    biteTarget: typeof g.biteTarget === "number" ? g.biteTarget : 0,
+    biteCount: typeof g.biteCount === "number" ? g.biteCount : 0,
+    intervals: Array.isArray(g.intervals) ? g.intervals.map(iv => ({ c: (iv && iv.c) || 0, i: (iv && iv.i) || 0 })) : [],
     fullGoal: g.fullGoal || "",
     target: typeof g.target === "number" ? g.target : null,
     targetOf: typeof g.targetOf === "number" ? g.targetOf : null,
@@ -304,9 +319,11 @@ function isAtCriteria(goal, pastPoints) {
   } else {
     const pC = Object.values(goal.sup || {}).reduce((s, b) => s + (b.c || 0), 0);
     const pI = Object.values(goal.sup || {}).reduce((s, b) => s + (b.i || 0), 0);
-    const curTotal = (goal.correct || 0) + (goal.incorrect || 0) + pC + pI;
+    const iC = (goal.intervals || []).reduce((s, iv) => s + (iv.c || 0), 0);
+    const iI = (goal.intervals || []).reduce((s, iv) => s + (iv.i || 0), 0);
+    const curTotal = (goal.correct || 0) + (goal.incorrect || 0) + pC + pI + iC + iI;
     if (curTotal > 0) {
-      points = [...points, { date: new Date().toISOString(), correct: goal.correct || 0, incorrect: (goal.incorrect || 0) + pC + pI, support: expected }];
+      points = [...points, { date: new Date().toISOString(), correct: (goal.correct || 0) + iC, incorrect: (goal.incorrect || 0) + iI + pC + pI, support: expected }];
     }
   }
   if (points.length === 0) return false;
@@ -471,7 +488,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
   const isDur = goal.type === "duration";
   const selSup = goal.usedSupport || "ind";
   const wrSup = goal.support || "ind";
-  const offLevel = !isDur && !hasItems && selSup !== "ind" && selSup !== "sp" && selSup !== wrSup;
+  const offLevel = !isDur && !hasItems && selSup !== "ind" && selSup !== "sp" && selSup !== wrSup && !(goal.supportOk || []).includes(selSup);
   const supTot = Object.values(goal.sup || {}).reduce((a, b) => ({ c: a.c + (b.c || 0), i: a.i + (b.i || 0) }), { c: 0, i: 0 });
   const oppsCap = (goal.ruleMode === "opps" && typeof goal.targetOf === "number" && goal.targetOf > 0) ? goal.targetOf : null;
   const capAi = hasItems ? Math.min(goal.activeItem || 0, goal.items.length - 1) : 0;
@@ -524,6 +541,15 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
 
   const handlePlus = () => bumpBy("correct", 1);
   const handleMinus = () => bumpBy("incorrect", 1);
+  const handleBite = () => {
+    const n = (goal.biteCount || 0) + 1;
+    if (n >= (goal.biteTarget || 1)) {
+      bumpBy("correct", 1);
+      update({ biteCount: 0 });
+    } else {
+      update({ biteCount: n });
+    }
+  };
   const handleUndo = () => {
     if (isDur) {
       if ((goal.durations || []).length > 0) onUpdate(goal.id, (prev) => ({ ...prev, durations: (prev.durations || []).slice(0, -1) }));
@@ -783,6 +809,33 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
             })}
           </div>
         )}
+        {!isDur && (goal.biteTarget || 0) > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+            <button onClick={handleBite} style={{
+              flex: 1, padding: "10px", borderRadius: 10, border: "none",
+              background: "#f59e0b", color: "#fff", fontSize: 14, fontWeight: 700,
+              cursor: "pointer", fontFamily: "inherit", boxShadow: "0 2px 0 #b45309",
+            }}>🍴 Bite {goal.biteCount || 0}/{goal.biteTarget}</button>
+            <button onClick={() => update({ biteCount: 0 })} title="Break taken — restart the run" style={{
+              padding: "10px 12px", borderRadius: 10, border: "1.5px solid #e2e8f0",
+              background: "#f8fafc", color: "#64748b", fontSize: 12, fontWeight: 700,
+              cursor: "pointer", fontFamily: "inherit",
+            }}>break ↺</button>
+          </div>
+        )}
+        {!isDur && goal.timerDuration && ((goal.intervals || []).length > 0 || (goal.correct || 0) + (goal.incorrect || 0) > 0) && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+            {(goal.intervals || []).map((iv, ii) => (
+              <span key={ii} style={{ fontSize: 11, fontWeight: 700, color: "#64748b", background: "#f1f5f9", borderRadius: 999, padding: "3px 9px" }}>
+                {goal.type === "percent" ? `${iv.c || 0}/${(iv.c || 0) + (iv.i || 0)}` : `${iv.c || 0}x`}
+              </span>
+            ))}
+            <button onClick={() => update({ intervals: [...(goal.intervals || []), { c: goal.correct || 0, i: goal.incorrect || 0 }], correct: 0, incorrect: 0, timerRemaining: goal.timerDuration, timerRunning: false })} style={{
+              padding: "4px 10px", borderRadius: 999, border: "1.5px solid #c7d2fe",
+              background: "#eef2ff", color: "#4f46e5", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+            }}>⏭ next interval</button>
+          </div>
+        )}
         {goal.done && (
           <div onClick={() => update({ done: false })} style={{
             background: "#e2e8f0", border: "1.5px solid #cbd5e1", borderRadius: 10,
@@ -1012,16 +1065,38 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>Written support</span>
-                {SUPPORT_CODES.map(c => (
-                  <button key={c} onClick={() => update({ support: c, usedSupport: c })} style={{
+                {SUPPORT_CODES.map(c => {
+                  const inSet = (goal.support || "ind") === c || (goal.supportOk || []).includes(c);
+                  return (
+                  <button key={c} onClick={() => {
+                    const set = [goal.support || "ind", ...(goal.supportOk || [])];
+                    const next = set.includes(c) ? set.filter(x => x !== c) : [...set, c];
+                    const primary = next[0] || "ind";
+                    update({ support: primary, supportOk: next.slice(1), usedSupport: primary });
+                  }} style={{
                     padding: "3px 8px", borderRadius: 6,
-                    border: `1.5px solid ${(goal.support || "ind") === c ? "#4f46e5" : "#e2e8f0"}`,
-                    background: (goal.support || "ind") === c ? "#ede9fe" : "#fff",
-                    color: (goal.support || "ind") === c ? "#4f46e5" : "#64748b",
+                    border: `1.5px solid ${inSet ? "#4f46e5" : "#e2e8f0"}`,
+                    background: inSet ? "#ede9fe" : "#fff",
+                    color: inSet ? "#4f46e5" : "#64748b",
                     fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
                   }}>{c}{(goal.sup && goal.sup[c] && ((goal.sup[c].c || 0) + (goal.sup[c].i || 0)) > 0) ? ` · ${goal.sup[c].c || 0}/${(goal.sup[c].c || 0) + (goal.sup[c].i || 0)}` : ""}</button>
-                ))}
+                  );
+                })}
               </div>
+              {goal.type === "tally" && (
+                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>Bites per run</span>
+                  {[0, 2, 3, 4, 5].map(n => (
+                    <button key={n} onClick={() => update({ biteTarget: n, biteCount: 0 })} style={{
+                      padding: "3px 10px", borderRadius: 6,
+                      border: `1.5px solid ${(goal.biteTarget || 0) === n ? "#f59e0b" : "#e2e8f0"}`,
+                      background: (goal.biteTarget || 0) === n ? "#fef3c7" : "#fff",
+                      color: (goal.biteTarget || 0) === n ? "#b45309" : "#64748b",
+                      fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                    }}>{n === 0 ? "off" : n}</button>
+                  ))}
+                </div>
+              )}
               {goal.type !== "duration" && (
               <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>Items</span>
@@ -1093,6 +1168,14 @@ function SummaryLine({ goal, index }) {
   if (goal.type === "tally" && supAgg.length > 0 && (goal.items || []).length === 0) {
     dataStr = `${correct}x ind` + supAgg.map(([c2, b]) => `; ${b.c || 0}x with ${c2}`).join("");
   }
+  if ((goal.intervals || []).length > 0 && (goal.items || []).length === 0) {
+    const ivs = [...goal.intervals, { c: correct, i: incorrect }].filter(iv => (iv.c || 0) + (iv.i || 0) > 0);
+    const tc2 = ivs.reduce((s, iv) => s + (iv.c || 0), 0);
+    const tt2 = ivs.reduce((s, iv) => s + (iv.c || 0) + (iv.i || 0), 0);
+    dataStr = goal.type === "percent"
+      ? `${ivs.map(iv => `${iv.c || 0}/${(iv.c || 0) + (iv.i || 0)}`).join(", ")} by interval; ${tc2}/${tt2}${tt2 > 0 ? ` — ${Math.round((tc2 / tt2) * 100)}%` : ""} total`
+      : `${ivs.map(iv => `${iv.c || 0}x`).join(", ")} by interval; ${tc2}x total`;
+  }
   {
     const cd = goal.ctxData || {};
     const ctxSeg = ["str", "unstr"].filter(cx => cd[cx] && (cd[cx].c || 0) + (cd[cx].i || 0) > 0).map(cx => {
@@ -1127,7 +1210,7 @@ function applyTap(goal, field, delta, onUpdate) {
   const hasItems = (goal.items || []).length > 0;
   const selSup = goal.usedSupport || "ind";
   const wrSup = goal.support || "ind";
-  const offLevel = !hasItems && selSup !== "ind" && selSup !== "sp" && selSup !== wrSup;
+  const offLevel = !hasItems && selSup !== "ind" && selSup !== "sp" && selSup !== wrSup && !(goal.supportOk || []).includes(selSup);
   if (hasItems) {
     onUpdate(goal.id, (prev) => {
       const idx = Math.min(prev.activeItem || 0, (prev.items || []).length - 1);
@@ -1665,6 +1748,8 @@ function App() {
         ruleMode: t.ruleMode,
         ruleN: t.ruleN,
         support: t.support,
+        supportOk: t.supportOk,
+        biteTarget: t.biteTarget,
         targetOf: t.targetOf,
         items: t.items,
       });
@@ -1747,6 +1832,14 @@ function App() {
       if (g.type === "tally" && supAgg.length > 0 && (g.items || []).length === 0) {
         dataStr = `${correct}x ind` + supAgg.map(([c2, b]) => `; ${b.c || 0}x with ${c2}`).join("");
       }
+      if ((g.intervals || []).length > 0 && (g.items || []).length === 0) {
+        const ivs = [...g.intervals, { c: correct, i: incorrect }].filter(iv => (iv.c || 0) + (iv.i || 0) > 0);
+        const tc2 = ivs.reduce((s, iv) => s + (iv.c || 0), 0);
+        const tt2 = ivs.reduce((s, iv) => s + (iv.c || 0) + (iv.i || 0), 0);
+        dataStr = g.type === "percent"
+          ? `${ivs.map(iv => `${iv.c || 0}/${(iv.c || 0) + (iv.i || 0)}`).join(", ")} by interval; ${tc2}/${tt2}${tt2 > 0 ? ` — ${Math.round((tc2 / tt2) * 100)}%` : ""} total`
+          : `${ivs.map(iv => `${iv.c || 0}x`).join(", ")} by interval; ${tc2}x total`;
+      }
       {
         const cd = g.ctxData || {};
         const ctxSeg = ["str", "unstr"].filter(cx => cd[cx] && (cd[cx].c || 0) + (cd[cx].i || 0) > 0).map(cx => {
@@ -1801,6 +1894,14 @@ function App() {
       }
       if (g.type === "tally" && supAgg.length > 0 && (g.items || []).length === 0) {
         dataStr = `${correct}x ind` + supAgg.map(([c2, b]) => `; ${b.c || 0}x with ${c2}`).join("");
+      }
+      if ((g.intervals || []).length > 0 && (g.items || []).length === 0) {
+        const ivs = [...g.intervals, { c: correct, i: incorrect }].filter(iv => (iv.c || 0) + (iv.i || 0) > 0);
+        const tc2 = ivs.reduce((s, iv) => s + (iv.c || 0), 0);
+        const tt2 = ivs.reduce((s, iv) => s + (iv.c || 0) + (iv.i || 0), 0);
+        dataStr = g.type === "percent"
+          ? `${ivs.map(iv => `${iv.c || 0}/${(iv.c || 0) + (iv.i || 0)}`).join(", ")} by interval; ${tc2}/${tt2}${tt2 > 0 ? ` — ${Math.round((tc2 / tt2) * 100)}%` : ""} total`
+          : `${ivs.map(iv => `${iv.c || 0}x`).join(", ")} by interval; ${tc2}x total`;
       }
       {
         const cd = g.ctxData || {};
@@ -1866,11 +1967,14 @@ function App() {
             ? (g.durations || []).length > 0
             : (g.items || []).length > 0
               ? g.items.some(it => (it.correct || 0) + (it.incorrect || 0) > 0 || it.att)
-              : (g.correct || 0) + (g.incorrect || 0) + Object.values(g.sup || {}).reduce((s, b) => s + (b.c || 0) + (b.i || 0), 0) > 0))
+              : (g.correct || 0) + (g.incorrect || 0) + Object.values(g.sup || {}).reduce((s, b) => s + (b.c || 0) + (b.i || 0), 0) + (g.intervals || []).reduce((s, iv) => s + (iv.c || 0) + (iv.i || 0), 0) > 0))
           .map(g => {
             const pc = Object.values(g.sup || {}).reduce((s, b) => s + (b.c || 0), 0);
             const pi = Object.values(g.sup || {}).reduce((s, b) => s + (b.i || 0), 0);
-            const base = { tid: g.tid, label: g.label, type: g.type, correct: g.correct || 0, incorrect: (g.incorrect || 0) + pc + pi, support: g.support || "ind" };
+            const ivC = (g.intervals || []).reduce((s, iv) => s + (iv.c || 0), 0);
+            const ivI = (g.intervals || []).reduce((s, iv) => s + (iv.i || 0), 0);
+            const base = { tid: g.tid, label: g.label, type: g.type, correct: (g.correct || 0) + ivC, incorrect: (g.incorrect || 0) + ivI + pc + pi, support: g.support || "ind" };
+            if (ivC + ivI > 0) base.intervals = g.intervals;
             if (pc + pi > 0) base.sup = g.sup;
             const cdT = ["str", "unstr"].reduce((s, cx) => s + (((g.ctxData || {})[cx] || {}).c || 0) + (((g.ctxData || {})[cx] || {}).i || 0), 0);
             if (cdT > 0) base.ctx = g.ctxData;

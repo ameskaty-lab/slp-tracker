@@ -1,10 +1,13 @@
-const CACHE_NAME = "slp-tracker-v15";
+const CACHE_NAME = "slp-tracker-v16";
 const URLS_TO_CACHE = [
   "./",
   "./index.html",
   "./history.html",
   "./goalbank.js",
   "./manifest.json",
+  "./react.production.min.js",
+  "./react-dom.production.min.js",
+  "./babel.min.js",
   "https://unpkg.com/react@18/umd/react.production.min.js",
   "https://unpkg.com/react-dom@18/umd/react-dom.production.min.js",
   "https://unpkg.com/@babel/standalone/babel.min.js",
@@ -14,10 +17,8 @@ const URLS_TO_CACHE = [
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(URLS_TO_CACHE).catch((err) => {
-        // Cache what we can even if one resource fails
-        console.log("Some resources failed to cache:", err);
-      });
+      // Cache each URL individually so one missing file doesn't block the rest
+      return Promise.all(URLS_TO_CACHE.map((u) => cache.add(u).catch(() => {})));
     })
   );
   self.skipWaiting();
