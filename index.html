@@ -1123,12 +1123,49 @@ function SummaryLine({ goal, index }) {
   );
 }
 
-function CompactLine({ goal, index, onTap, at }) {
+function applyTap(goal, field, delta, onUpdate) {
+  const hasItems = (goal.items || []).length > 0;
+  const selSup = goal.usedSupport || "ind";
+  const wrSup = goal.support || "ind";
+  const offLevel = !hasItems && selSup !== "ind" && selSup !== "sp" && selSup !== wrSup;
+  if (hasItems) {
+    onUpdate(goal.id, (prev) => {
+      const idx = Math.min(prev.activeItem || 0, (prev.items || []).length - 1);
+      return { ...prev, items: (prev.items || []).map((it, i) => (i === idx ? { ...it, [field]: Math.max(0, (it[field] || 0) + delta) } : it)) };
+    });
+  } else if (offLevel) {
+    onUpdate(goal.id, (prev) => {
+      const sup = { ...(prev.sup || {}) };
+      const b = { c: 0, i: 0, ...(sup[selSup] || {}) };
+      const k = field === "correct" ? "c" : "i";
+      b[k] = Math.max(0, (b[k] || 0) + delta);
+      sup[selSup] = b;
+      return { ...prev, sup };
+    });
+  } else {
+    onUpdate(goal.id, (prev) => ({ ...prev, [field]: Math.max(0, (prev[field] || 0) + delta) }));
+  }
+  if (goal.ctx) {
+    onUpdate(goal.id, (prev) => {
+      if (!prev.ctx) return prev;
+      const cd = { str: { c: 0, i: 0 }, unstr: { c: 0, i: 0 }, ...(prev.ctxData || {}) };
+      const k = field === "correct" ? "c" : "i";
+      const b = { ...cd[prev.ctx] };
+      b[k] = Math.max(0, (b[k] || 0) + delta);
+      cd[prev.ctx] = b;
+      return { ...prev, ctxData: cd };
+    });
+  }
+}
+
+function CompactLine({ goal, index, onTap, at, onUpdate }) {
   let s;
+  const hasIt = (goal.items || []).length > 0;
+  const aiC = hasIt ? Math.min(goal.activeItem || 0, goal.items.length - 1) : 0;
   if (goal.type === "duration") {
     const n = (goal.durations || []).length;
     s = n > 0 ? `${n} stretch${n === 1 ? "" : "es"} · ${formatTime(Math.max(...goal.durations))}` : "—";
-  } else if ((goal.items || []).length > 0) {
+  } else if (hasIt) {
     const its = goal.items.filter(it => (it.correct || 0) + (it.incorrect || 0) > 0 || it.att);
     const c = its.reduce((a, it) => a + (it.correct || 0), 0);
     const t = its.reduce((a, it) => a + (it.correct || 0) + (it.incorrect || 0), 0);
@@ -1138,6 +1175,11 @@ function CompactLine({ goal, index, onTap, at }) {
     const t = (goal.correct || 0) + (goal.incorrect || 0) + pc;
     s = goal.type === "percent" ? (t > 0 ? `${goal.correct || 0}/${t} · ${Math.round(((goal.correct || 0) / t) * 100)}%` : "—") : `${goal.correct || 0}x`;
   }
+  const oppsCapC = (goal.ruleMode === "opps" && typeof goal.targetOf === "number" && goal.targetOf > 0) ? goal.targetOf : null;
+  const selCount = hasIt
+    ? (goal.items[aiC] ? (goal.items[aiC].correct || 0) + (goal.items[aiC].incorrect || 0) : 0)
+    : (goal.correct || 0) + (goal.incorrect || 0) + Object.values(goal.sup || {}).reduce((a, b) => a + (b.c || 0) + (b.i || 0), 0);
+  const locked = !!goal.done || (oppsCapC != null && selCount >= oppsCapC);
   const supTag = (goal.usedSupport || "ind") !== "ind" ? goal.usedSupport : "";
   return (
     <div onClick={onTap} style={{
@@ -1151,6 +1193,23 @@ function CompactLine({ goal, index, onTap, at }) {
       {at && <span style={{ fontSize: 12, flexShrink: 0 }}>🎯</span>}
       {goal.done && <span style={{ fontSize: 11, color: "#16a34a", fontWeight: 700, flexShrink: 0 }}>✓</span>}
       <span style={{ fontSize: 13, fontWeight: 700, color: "#4f46e5", fontFamily: "ui-monospace, Menlo, monospace", flexShrink: 0 }}>{s}</span>
+      {hasIt && goal.items[aiC] && (
+        <span style={{ fontSize: 10, fontWeight: 700, color: "#4f46e5", background: "#ede9fe", borderRadius: 999, padding: "2px 7px", flexShrink: 0, maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{goal.items[aiC].name}</span>
+      )}
+      {goal.type !== "duration" && (
+        <button onClick={(e) => { e.stopPropagation(); if (!locked) applyTap(goal, "correct", 1, onUpdate); }} disabled={locked} style={{
+          width: 36, height: 36, borderRadius: 10, border: "none", flexShrink: 0,
+          background: locked ? "#cbd5e1" : "#22c55e", color: "#fff", fontSize: 18, fontWeight: 700,
+          cursor: locked ? "default" : "pointer",
+        }}>+</button>
+      )}
+      {goal.type === "percent" && (
+        <button onClick={(e) => { e.stopPropagation(); if (!locked) applyTap(goal, "incorrect", 1, onUpdate); }} disabled={locked} style={{
+          width: 36, height: 36, borderRadius: 10, border: "none", flexShrink: 0,
+          background: locked ? "#cbd5e1" : "#ef4444", color: "#fff", fontSize: 18, fontWeight: 700,
+          cursor: locked ? "default" : "pointer",
+        }}>−</button>
+      )}
     </div>
   );
 }
@@ -1909,7 +1968,7 @@ function App() {
       <div style={{ padding: "12px 16px 0" }}>
         {goals.filter(g => !g.skipped).map((g, i) => (
           compactView && g.id !== expandedId ? (
-            <CompactLine key={g.id} goal={g} index={i} at={goalAtCriteria(g, studentHistory)} onTap={() => setExpandedId(g.id)} />
+            <CompactLine key={g.id} goal={g} index={i} at={goalAtCriteria(g, studentHistory)} onTap={() => setExpandedId(g.id)} onUpdate={updateGoal} />
           ) : (
             <React.Fragment key={g.id}>
               {compactView && (
