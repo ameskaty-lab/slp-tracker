@@ -158,6 +158,8 @@ function newGoal() {
     support: "ind",
     usedSupport: "ind",
     sup: {},
+    ctx: "",
+    ctxData: { str: { c: 0, i: 0 }, unstr: { c: 0, i: 0 } },
     items: [],
     activeItem: 0,
     fullGoal: "",
@@ -219,6 +221,8 @@ function normalizeGoalFields(g) {
     support: typeof g.support === "string" && g.support ? g.support : "ind",
     usedSupport: typeof g.usedSupport === "string" && g.usedSupport ? g.usedSupport : "ind",
     sup: (g.sup && typeof g.sup === "object" && !Array.isArray(g.sup)) ? g.sup : {},
+    ctx: g.ctx === "str" || g.ctx === "unstr" ? g.ctx : "",
+    ctxData: (g.ctxData && g.ctxData.str && g.ctxData.unstr) ? g.ctxData : { str: { c: 0, i: 0 }, unstr: { c: 0, i: 0 } },
     fullGoal: g.fullGoal || "",
     target: typeof g.target === "number" ? g.target : null,
     targetOf: typeof g.targetOf === "number" ? g.targetOf : null,
@@ -505,6 +509,17 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
     } else {
       onUpdate(goal.id, (prev) => ({ ...prev, [field]: Math.max(0, (prev[field] || 0) + delta) }));
     }
+    if (goal.ctx) {
+      onUpdate(goal.id, (prev) => {
+        if (!prev.ctx) return prev;
+        const cd = { str: { c: 0, i: 0 }, unstr: { c: 0, i: 0 }, ...(prev.ctxData || {}) };
+        const k = field === "correct" ? "c" : "i";
+        const b = { ...cd[prev.ctx] };
+        b[k] = Math.max(0, (b[k] || 0) + delta);
+        cd[prev.ctx] = b;
+        return { ...prev, ctxData: cd };
+      });
+    }
   };
 
   const handlePlus = () => bumpBy("correct", 1);
@@ -534,7 +549,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
     if (type === "tally") {
       if (isDur) update({ durations: [] });
       else if (hasItems) onUpdate(goal.id, (prev) => ({ ...prev, items: (prev.items || []).map(it => ({ ...it, correct: 0, incorrect: 0 })) }));
-      else update({ correct: 0, incorrect: 0, sup: {} });
+      else update({ correct: 0, incorrect: 0, sup: {}, ctxData: { str: { c: 0, i: 0 }, unstr: { c: 0, i: 0 } } });
     }
     if (type === "timer") update({ timerRemaining: goal.timerDuration, timerRunning: false, timerAlert: false });
     setConfirm(null);
@@ -731,11 +746,10 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
           const indPct = allT > 0 ? Math.round(((goal.correct || 0) / allT) * 100) : 0;
           return (
             <div style={{ fontSize: 12, color: "#64748b", margin: "-6px 0 10px", fontFamily: "monospace" }}>
-              ind {goal.correct || 0}/{allT} ({indPct}%)
-              {Object.entries(goal.sup || {}).filter(([c2, b]) => (b.c || 0) + (b.i || 0) > 0).map(([c2, b]) => {
-                const wPct = allT > 0 ? Math.round((((goal.correct || 0) + (b.c || 0)) / allT) * 100) : 0;
-                return <span key={c2}> · w/{c2} {(goal.correct || 0) + (b.c || 0)}/{allT} ({wPct}%)</span>;
-              })}
+              {goal.type === "tally" ? `ind ${goal.correct || 0}x` : `ind ${goal.correct || 0}/${allT} (${indPct}%)`}
+              {Object.entries(goal.sup || {}).filter(([c2, b]) => (b.c || 0) + (b.i || 0) > 0).map(([c2, b]) => (
+                <span key={c2}> · w/{c2} {goal.type === "tally" ? `${b.c || 0}x` : `${b.c || 0}/${(b.c || 0) + (b.i || 0)}`}</span>
+              ))}
             </div>
           );
         })()}
@@ -749,6 +763,24 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
                 cursor: "pointer", fontFamily: "inherit",
               }}>{opt.label}</button>
             ))}
+          </div>
+        )}
+        {!isDur && (
+          <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+            {["str", "unstr"].map(cx => {
+              const b = (goal.ctxData || {})[cx] || { c: 0, i: 0 };
+              const t = (b.c || 0) + (b.i || 0);
+              const on = goal.ctx === cx;
+              return (
+                <button key={cx} onClick={() => update({ ctx: on ? "" : cx })} style={{
+                  padding: "5px 11px", borderRadius: 999,
+                  border: `1.5px solid ${on ? "#0891b2" : "#e2e8f0"}`,
+                  background: on ? "#ecfeff" : "#fff",
+                  color: on ? "#0e7490" : "#94a3b8",
+                  fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                }}>{cx === "str" ? "structured" : "unstructured"}{t > 0 ? ` · ${goal.type === "tally" ? `${b.c || 0}x` : `${b.c || 0}/${t}`}` : ""}</button>
+              );
+            })}
           </div>
         )}
         {goal.done && (
@@ -1056,10 +1088,19 @@ function SummaryLine({ goal, index }) {
   if (goal.type === "percent" && supAgg.length > 0 && (goal.items || []).length === 0) {
     const allT = correct + incorrect + supAgg.reduce((s, [c2, b]) => s + (b.c || 0) + (b.i || 0), 0);
     const indPct = allT > 0 ? Math.round((correct / allT) * 100) : 0;
-    dataStr = `${correct}/${allT} — ${indPct}% ind` + supAgg.map(([c2, b]) => {
-      const wPct = allT > 0 ? Math.round(((correct + (b.c || 0)) / allT) * 100) : 0;
-      return `; with ${c2} ${correct + (b.c || 0)}/${allT} — ${wPct}%`;
-    }).join("");
+    dataStr = `${correct}/${allT} — ${indPct}% ind` + supAgg.map(([c2, b]) => `; with ${c2} ${b.c || 0}/${(b.c || 0) + (b.i || 0)}`).join("");
+  }
+  if (goal.type === "tally" && supAgg.length > 0 && (goal.items || []).length === 0) {
+    dataStr = `${correct}x ind` + supAgg.map(([c2, b]) => `; ${b.c || 0}x with ${c2}`).join("");
+  }
+  {
+    const cd = goal.ctxData || {};
+    const ctxSeg = ["str", "unstr"].filter(cx => cd[cx] && (cd[cx].c || 0) + (cd[cx].i || 0) > 0).map(cx => {
+      const b = cd[cx]; const t = (b.c || 0) + (b.i || 0);
+      const name = cx === "str" ? "structured" : "unstructured";
+      return goal.type === "tally" ? `${b.c || 0}x ${name}` : `${name} ${b.c || 0}/${t}`;
+    }).join(", ");
+    if (ctxSeg) dataStr += `; ${ctxSeg}`;
   }
   if (goal.type === "duration") {
     dataStr = (goal.durations || []).length
@@ -1078,6 +1119,38 @@ function SummaryLine({ goal, index }) {
       {goal.notes.trim() && (
         <span style={{ color: "#94a3b8", fontSize: 13 }}>; {goal.notes.trim()}</span>
       )}
+    </div>
+  );
+}
+
+function CompactLine({ goal, index, onTap, at }) {
+  let s;
+  if (goal.type === "duration") {
+    const n = (goal.durations || []).length;
+    s = n > 0 ? `${n} stretch${n === 1 ? "" : "es"} · ${formatTime(Math.max(...goal.durations))}` : "—";
+  } else if ((goal.items || []).length > 0) {
+    const its = goal.items.filter(it => (it.correct || 0) + (it.incorrect || 0) > 0 || it.att);
+    const c = its.reduce((a, it) => a + (it.correct || 0), 0);
+    const t = its.reduce((a, it) => a + (it.correct || 0) + (it.incorrect || 0), 0);
+    s = goal.type === "percent" ? (t > 0 ? `${c}/${t} · ${Math.round((c / t) * 100)}%` : "—") : `${c}x`;
+  } else {
+    const pc = Object.values(goal.sup || {}).reduce((a, b) => a + (b.c || 0) + (b.i || 0), 0);
+    const t = (goal.correct || 0) + (goal.incorrect || 0) + pc;
+    s = goal.type === "percent" ? (t > 0 ? `${goal.correct || 0}/${t} · ${Math.round(((goal.correct || 0) / t) * 100)}%` : "—") : `${goal.correct || 0}x`;
+  }
+  const supTag = (goal.usedSupport || "ind") !== "ind" ? goal.usedSupport : "";
+  return (
+    <div onClick={onTap} style={{
+      background: goal.done ? "#f1f5f9" : "#fff", border: "1.5px solid #e2e8f0", borderRadius: 10,
+      padding: "9px 12px", marginBottom: 6, display: "flex", alignItems: "center", gap: 8,
+      cursor: "pointer", opacity: goal.done ? 0.7 : 1,
+    }}>
+      <span style={{ background: "#4f46e5", color: "#fff", borderRadius: "50%", width: 20, height: 20, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, flexShrink: 0 }}>{index + 1}</span>
+      <span style={{ fontSize: 13, fontWeight: 600, color: "#334155", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{goal.label || "Untitled goal"}</span>
+      {supTag && <span style={{ fontSize: 10, fontWeight: 700, color: "#d97706", flexShrink: 0 }}>{supTag}</span>}
+      {at && <span style={{ fontSize: 12, flexShrink: 0 }}>🎯</span>}
+      {goal.done && <span style={{ fontSize: 11, color: "#16a34a", fontWeight: 700, flexShrink: 0 }}>✓</span>}
+      <span style={{ fontSize: 13, fontWeight: 700, color: "#4f46e5", fontFamily: "ui-monospace, Menlo, monospace", flexShrink: 0 }}>{s}</span>
     </div>
   );
 }
@@ -1122,7 +1195,7 @@ function BankModal({ onPick, onClose, targetName }) {
   );
 }
 
-function StudentBar({ roster, selectedId, onSelect, onAdd, onManage, onHistory, onBank }) {
+function StudentBar({ roster, selectedId, onSelect, onAdd, onManage, onHistory, onBank, onCompact, isCompact }) {
   const pill = (active) => ({
     padding: "7px 14px", borderRadius: 999, border: "2px solid",
     borderColor: active ? "#4f46e5" : "#e2e8f0",
@@ -1155,6 +1228,13 @@ function StudentBar({ roster, selectedId, onSelect, onAdd, onManage, onHistory, 
           marginBottom: 4,
         }}>🕘</button>
       )}
+      <button onClick={onCompact} title="Compact view" style={{
+        padding: "7px 10px", borderRadius: 10,
+        border: `2px solid ${isCompact ? "#4f46e5" : "#e2e8f0"}`,
+        background: isCompact ? "#ede9fe" : "#fff",
+        color: isCompact ? "#4f46e5" : "#64748b",
+        fontSize: 14, cursor: "pointer", flexShrink: 0, marginBottom: 4,
+      }}>☰</button>
       <button onClick={onBank} title="Goal bank" style={{
         padding: "7px 10px", borderRadius: 10, border: "2px solid #e2e8f0",
         background: "#fff", color: "#64748b", fontSize: 14, cursor: "pointer", flexShrink: 0,
@@ -1337,6 +1417,8 @@ function App() {
   const [addingStudent, setAddingStudent] = useState(false);
   const [shareStatus, setShareStatus] = useState(null);
   const [showBank, setShowBank] = useState(false);
+  const [compactView, setCompactView] = useState(false);
+  const [expandedId, setExpandedId] = useState(null);
 
   const { roster, selectedId, sessions } = store;
   const session = sessions[selectedId] || defaultSession();
@@ -1601,10 +1683,19 @@ function App() {
       if (g.type === "percent" && supAgg.length > 0 && (g.items || []).length === 0) {
         const allT = correct + incorrect + supAgg.reduce((s, [c2, b]) => s + (b.c || 0) + (b.i || 0), 0);
         const indPct = allT > 0 ? Math.round((correct / allT) * 100) : 0;
-        dataStr = `${correct}/${allT} — ${indPct}% ind` + supAgg.map(([c2, b]) => {
-          const wPct = allT > 0 ? Math.round(((correct + (b.c || 0)) / allT) * 100) : 0;
-          return `; with ${c2} ${correct + (b.c || 0)}/${allT} — ${wPct}%`;
-        }).join("");
+        dataStr = `${correct}/${allT} — ${indPct}% ind` + supAgg.map(([c2, b]) => `; with ${c2} ${b.c || 0}/${(b.c || 0) + (b.i || 0)}`).join("");
+      }
+      if (g.type === "tally" && supAgg.length > 0 && (g.items || []).length === 0) {
+        dataStr = `${correct}x ind` + supAgg.map(([c2, b]) => `; ${b.c || 0}x with ${c2}`).join("");
+      }
+      {
+        const cd = g.ctxData || {};
+        const ctxSeg = ["str", "unstr"].filter(cx => cd[cx] && (cd[cx].c || 0) + (cd[cx].i || 0) > 0).map(cx => {
+          const b = cd[cx]; const t = (b.c || 0) + (b.i || 0);
+          const name = cx === "str" ? "structured" : "unstructured";
+          return g.type === "tally" ? `${b.c || 0}x ${name}` : `${name} ${b.c || 0}/${t}`;
+        }).join(", ");
+        if (ctxSeg) dataStr += `; ${ctxSeg}`;
       }
       if (g.type === "duration") {
         dataStr = (g.durations || []).length
@@ -1647,10 +1738,19 @@ function App() {
       if (g.type === "percent" && supAgg.length > 0 && (g.items || []).length === 0) {
         const allT = correct + incorrect + supAgg.reduce((s, [c2, b]) => s + (b.c || 0) + (b.i || 0), 0);
         const indPct = allT > 0 ? Math.round((correct / allT) * 100) : 0;
-        dataStr = `${correct}/${allT} — ${indPct}% ind` + supAgg.map(([c2, b]) => {
-          const wPct = allT > 0 ? Math.round(((correct + (b.c || 0)) / allT) * 100) : 0;
-          return `; with ${c2} ${correct + (b.c || 0)}/${allT} — ${wPct}%`;
-        }).join("");
+        dataStr = `${correct}/${allT} — ${indPct}% ind` + supAgg.map(([c2, b]) => `; with ${c2} ${b.c || 0}/${(b.c || 0) + (b.i || 0)}`).join("");
+      }
+      if (g.type === "tally" && supAgg.length > 0 && (g.items || []).length === 0) {
+        dataStr = `${correct}x ind` + supAgg.map(([c2, b]) => `; ${b.c || 0}x with ${c2}`).join("");
+      }
+      {
+        const cd = g.ctxData || {};
+        const ctxSeg = ["str", "unstr"].filter(cx => cd[cx] && (cd[cx].c || 0) + (cd[cx].i || 0) > 0).map(cx => {
+          const b = cd[cx]; const t = (b.c || 0) + (b.i || 0);
+          const name = cx === "str" ? "structured" : "unstructured";
+          return g.type === "tally" ? `${b.c || 0}x ${name}` : `${name} ${b.c || 0}/${t}`;
+        }).join(", ");
+        if (ctxSeg) dataStr += `; ${ctxSeg}`;
       }
       if (g.type === "duration") {
         dataStr = (g.durations || []).length
@@ -1713,6 +1813,8 @@ function App() {
             const pi = Object.values(g.sup || {}).reduce((s, b) => s + (b.i || 0), 0);
             const base = { tid: g.tid, label: g.label, type: g.type, correct: g.correct || 0, incorrect: (g.incorrect || 0) + pc + pi, support: g.support || "ind" };
             if (pc + pi > 0) base.sup = g.sup;
+            const cdT = ["str", "unstr"].reduce((s, cx) => s + (((g.ctxData || {})[cx] || {}).c || 0) + (((g.ctxData || {})[cx] || {}).i || 0), 0);
+            if (cdT > 0) base.ctx = g.ctxData;
             if (g.type === "duration" && (g.durations || []).length > 0) {
               base.duration = Math.max(...g.durations);
               base.correct = g.durations.length;
@@ -1787,6 +1889,8 @@ function App() {
         onManage={() => setShowRoster(v => !v)}
         onHistory={openHistory}
         onBank={() => setShowBank(true)}
+        onCompact={() => { setCompactView(v => !v); setExpandedId(null); }}
+        isCompact={compactView}
       />
 
       {showRoster && (
@@ -1804,7 +1908,20 @@ function App() {
 
       <div style={{ padding: "12px 16px 0" }}>
         {goals.filter(g => !g.skipped).map((g, i) => (
-          <GoalCard key={g.id} goal={g} index={i} onUpdate={updateGoal} onRemove={removeGoal} onSkip={skipGoal} canSkip={selectedId !== "quick"} history={pointsFor(studentHistory, g.tid)} atCriteria={goalAtCriteria(g, studentHistory)} />
+          compactView && g.id !== expandedId ? (
+            <CompactLine key={g.id} goal={g} index={i} at={goalAtCriteria(g, studentHistory)} onTap={() => setExpandedId(g.id)} />
+          ) : (
+            <React.Fragment key={g.id}>
+              {compactView && (
+                <button onClick={() => setExpandedId(null)} style={{
+                  width: "100%", padding: "5px", borderRadius: 8, border: "none",
+                  background: "#ede9fe", color: "#4f46e5", fontSize: 11, fontWeight: 700,
+                  cursor: "pointer", fontFamily: "inherit", marginBottom: 4,
+                }}>▴ collapse</button>
+              )}
+              <GoalCard goal={g} index={i} onUpdate={updateGoal} onRemove={removeGoal} onSkip={skipGoal} canSkip={selectedId !== "quick"} history={pointsFor(studentHistory, g.tid)} atCriteria={goalAtCriteria(g, studentHistory)} />
+            </React.Fragment>
+          )
         ))}
         {goals.some(g => g.skipped) && (
           <div style={{
