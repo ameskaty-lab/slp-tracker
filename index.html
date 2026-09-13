@@ -1198,7 +1198,10 @@ function SummaryLine({ goal, index }) {
     }).join(", ");
     if (ctxSeg) dataStr += `; ${ctxSeg}`;
   }
-  if ((goal.biteRuns || []).length > 0) dataStr += `; bites per run: ${goal.biteRuns.join(", ")}`;
+  {
+    const runs = [...(goal.biteRuns || []), ...((goal.biteCount || 0) > 0 ? [goal.biteCount] : [])];
+    if (runs.length > 0) dataStr += `; bites per run: ${runs.join(", ")} (${runs.reduce((a, b) => a + b, 0)} bites total)`;
+  }
   if (goal.type === "duration") {
     dataStr = (goal.durations || []).length
       ? `longest ${formatTime(Math.max(...goal.durations))} (${goal.durations.length} stretch${goal.durations.length === 1 ? "" : "es"})`
@@ -1869,7 +1872,10 @@ function App() {
         }).join(", ");
         if (ctxSeg) dataStr += `; ${ctxSeg}`;
       }
-      if ((g.biteRuns || []).length > 0) dataStr += `; bites per run: ${g.biteRuns.join(", ")}`;
+      {
+        const runs = [...(g.biteRuns || []), ...((g.biteCount || 0) > 0 ? [g.biteCount] : [])];
+        if (runs.length > 0) dataStr += `; bites per run: ${runs.join(", ")} (${runs.reduce((a, b) => a + b, 0)} bites total)`;
+      }
       if (g.type === "duration") {
         dataStr = (g.durations || []).length
           ? `longest ${formatTime(Math.max(...g.durations))} (${g.durations.length} stretch${g.durations.length === 1 ? "" : "es"})`
@@ -1939,7 +1945,10 @@ function App() {
         }).join(", ");
         if (ctxSeg) dataStr += `; ${ctxSeg}`;
       }
-      if ((g.biteRuns || []).length > 0) dataStr += `; bites per run: ${g.biteRuns.join(", ")}`;
+      {
+        const runs = [...(g.biteRuns || []), ...((g.biteCount || 0) > 0 ? [g.biteCount] : [])];
+        if (runs.length > 0) dataStr += `; bites per run: ${runs.join(", ")} (${runs.reduce((a, b) => a + b, 0)} bites total)`;
+      }
       if (g.type === "duration") {
         dataStr = (g.durations || []).length
           ? `longest ${formatTime(Math.max(...g.durations))} (${g.durations.length} stretch${g.durations.length === 1 ? "" : "es"})`
@@ -1995,7 +2004,7 @@ function App() {
             ? (g.durations || []).length > 0
             : (g.items || []).length > 0
               ? g.items.some(it => (it.correct || 0) + (it.incorrect || 0) > 0 || it.att)
-              : (g.correct || 0) + (g.incorrect || 0) + Object.values(g.sup || {}).reduce((s, b) => s + (b.c || 0) + (b.i || 0), 0) + (g.intervals || []).reduce((s, iv) => s + (iv.c || 0) + (iv.i || 0), 0) + (g.biteRuns || []).length > 0))
+              : (g.correct || 0) + (g.incorrect || 0) + Object.values(g.sup || {}).reduce((s, b) => s + (b.c || 0) + (b.i || 0), 0) + (g.intervals || []).reduce((s, iv) => s + (iv.c || 0) + (iv.i || 0), 0) + (g.biteRuns || []).length + (g.biteCount || 0) > 0))
           .map(g => {
             const accSet = new Set(["ind", "sp", g.support || "ind", ...(g.supportOk || [])]);
             const accB = Object.entries(g.sup || {}).reduce((s, [cd, b]) => s + (accSet.has(cd) ? (b.c || 0) : 0), 0);
@@ -2007,7 +2016,8 @@ function App() {
             const base = { tid: g.tid, label: g.label, type: g.type, correct: accC2, incorrect: allT2 - accC2, support: g.support || "ind" };
             if (ivC + ivI > 0) base.intervals = g.intervals;
             if (pT > 0) base.sup = g.sup;
-            if ((g.biteRuns || []).length > 0) base.biteRuns = g.biteRuns;
+            const bRuns = [...(g.biteRuns || []), ...((g.biteCount || 0) > 0 ? [g.biteCount] : [])];
+            if (bRuns.length > 0) base.biteRuns = bRuns;
             const cdT = ["str", "unstr"].reduce((s, cx) => s + (((g.ctxData || {})[cx] || {}).c || 0) + (((g.ctxData || {})[cx] || {}).i || 0), 0);
             if (cdT > 0) base.ctx = g.ctxData;
             if (g.type === "duration" && (g.durations || []).length > 0) {
