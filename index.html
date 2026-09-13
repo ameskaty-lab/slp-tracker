@@ -166,6 +166,7 @@ function newGoal() {
     supportOk: [],
     biteTarget: 0,
     biteCount: 0,
+    biteRuns: [],
     intervals: [],
     items: [],
     activeItem: 0,
@@ -237,6 +238,7 @@ function normalizeGoalFields(g) {
     supportOk: Array.isArray(g.supportOk) ? g.supportOk.filter(c => typeof c === "string") : [],
     biteTarget: typeof g.biteTarget === "number" ? g.biteTarget : 0,
     biteCount: typeof g.biteCount === "number" ? g.biteCount : 0,
+    biteRuns: Array.isArray(g.biteRuns) ? g.biteRuns.filter(n => typeof n === "number") : [],
     intervals: Array.isArray(g.intervals) ? g.intervals.map(iv => ({ c: (iv && iv.c) || 0, i: (iv && iv.i) || 0 })) : [],
     fullGoal: g.fullGoal || "",
     target: typeof g.target === "number" ? g.target : null,
@@ -317,13 +319,15 @@ function isAtCriteria(goal, pastPoints) {
       points = [...points, { date: new Date().toISOString(), correct: goal.durations.length, incorrect: 0, duration: Math.max(...goal.durations), support: expected }];
     }
   } else {
-    const pC = Object.values(goal.sup || {}).reduce((s, b) => s + (b.c || 0), 0);
-    const pI = Object.values(goal.sup || {}).reduce((s, b) => s + (b.i || 0), 0);
+    const accSet = new Set(["ind", "sp", goal.support || "ind", ...(goal.supportOk || [])]);
+    const accB = Object.entries(goal.sup || {}).reduce((s, [cd, b]) => s + (accSet.has(cd) ? (b.c || 0) : 0), 0);
+    const pT = Object.values(goal.sup || {}).reduce((s, b) => s + (b.c || 0) + (b.i || 0), 0);
     const iC = (goal.intervals || []).reduce((s, iv) => s + (iv.c || 0), 0);
     const iI = (goal.intervals || []).reduce((s, iv) => s + (iv.i || 0), 0);
-    const curTotal = (goal.correct || 0) + (goal.incorrect || 0) + pC + pI + iC + iI;
+    const curTotal = (goal.correct || 0) + (goal.incorrect || 0) + pT + iC + iI;
     if (curTotal > 0) {
-      points = [...points, { date: new Date().toISOString(), correct: (goal.correct || 0) + iC, incorrect: (goal.incorrect || 0) + iI + pC + pI, support: expected }];
+      const accC = (goal.correct || 0) + iC + accB;
+      points = [...points, { date: new Date().toISOString(), correct: accC, incorrect: curTotal - accC, support: expected }];
     }
   }
   if (points.length === 0) return false;
@@ -488,7 +492,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
   const isDur = goal.type === "duration";
   const selSup = goal.usedSupport || "ind";
   const wrSup = goal.support || "ind";
-  const offLevel = !isDur && !hasItems && selSup !== "ind" && selSup !== "sp" && selSup !== wrSup && !(goal.supportOk || []).includes(selSup);
+  const offLevel = !isDur && !hasItems && selSup !== wrSup;
   const supTot = Object.values(goal.sup || {}).reduce((a, b) => ({ c: a.c + (b.c || 0), i: a.i + (b.i || 0) }), { c: 0, i: 0 });
   const oppsCap = (goal.ruleMode === "opps" && typeof goal.targetOf === "number" && goal.targetOf > 0) ? goal.targetOf : null;
   const capAi = hasItems ? Math.min(goal.activeItem || 0, goal.items.length - 1) : 0;
@@ -545,7 +549,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
     const n = (goal.biteCount || 0) + 1;
     if (n >= (goal.biteTarget || 1)) {
       bumpBy("correct", 1);
-      update({ biteCount: 0 });
+      update({ biteCount: 0, biteRuns: [...(goal.biteRuns || []), n] });
     } else {
       update({ biteCount: n });
     }
@@ -575,7 +579,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
     if (type === "tally") {
       if (isDur) update({ durations: [] });
       else if (hasItems) onUpdate(goal.id, (prev) => ({ ...prev, items: (prev.items || []).map(it => ({ ...it, correct: 0, incorrect: 0 })) }));
-      else update({ correct: 0, incorrect: 0, sup: {}, ctxData: { str: { c: 0, i: 0 }, unstr: { c: 0, i: 0 } } });
+      else update({ correct: 0, incorrect: 0, sup: {}, ctxData: { str: { c: 0, i: 0 }, unstr: { c: 0, i: 0 } }, biteCount: 0, biteRuns: [], intervals: [] });
     }
     if (type === "timer") update({ timerRemaining: goal.timerDuration, timerRunning: false, timerAlert: false });
     setConfirm(null);
@@ -687,7 +691,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
           }}>
             <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#94a3b8" }}>Support</span>
             <span style={{ fontSize: 12, fontWeight: 700, color: (goal.usedSupport || "ind") === (goal.support || "ind") ? "#4f46e5" : "#d97706" }}>
-              {selSup}{offLevel ? " · taps count as prompted" : ""}
+              {selSup}{offLevel ? " · taps log under this level" : ""}
             </span>
             <span style={{ fontSize: 12, marginLeft: "auto", color: "#cbd5e1" }}>{supportOpen ? "▲" : "▼"}</span>
           </button>
@@ -772,9 +776,9 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
           const indPct = allT > 0 ? Math.round(((goal.correct || 0) / allT) * 100) : 0;
           return (
             <div style={{ fontSize: 12, color: "#64748b", margin: "-6px 0 10px", fontFamily: "monospace" }}>
-              {goal.type === "tally" ? `ind ${goal.correct || 0}x` : `ind ${goal.correct || 0}/${allT} (${indPct}%)`}
+              {goal.type === "tally" ? `${wrSup} ${goal.correct || 0}x` : `${wrSup} ${goal.correct || 0}/${(goal.correct || 0) + (goal.incorrect || 0)}`}
               {Object.entries(goal.sup || {}).filter(([c2, b]) => (b.c || 0) + (b.i || 0) > 0).map(([c2, b]) => (
-                <span key={c2}> · w/{c2} {goal.type === "tally" ? `${b.c || 0}x` : `${b.c || 0}/${(b.c || 0) + (b.i || 0)}`}</span>
+                <span key={c2}> · {c2} {goal.type === "tally" ? `${b.c || 0}x` : `${b.c || 0}/${(b.c || 0) + (b.i || 0)}`}</span>
               ))}
             </div>
           );
@@ -816,11 +820,14 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
               background: "#f59e0b", color: "#fff", fontSize: 14, fontWeight: 700,
               cursor: "pointer", fontFamily: "inherit", boxShadow: "0 2px 0 #b45309",
             }}>🍴 Bite {goal.biteCount || 0}/{goal.biteTarget}</button>
-            <button onClick={() => update({ biteCount: 0 })} title="Break taken — restart the run" style={{
+            <button onClick={() => update({ biteCount: 0, biteRuns: (goal.biteCount || 0) > 0 ? [...(goal.biteRuns || []), goal.biteCount] : (goal.biteRuns || []) })} title="Break taken — saves this run and starts a new one" style={{
               padding: "10px 12px", borderRadius: 10, border: "1.5px solid #e2e8f0",
               background: "#f8fafc", color: "#64748b", fontSize: 12, fontWeight: 700,
               cursor: "pointer", fontFamily: "inherit",
             }}>break ↺</button>
+            {(goal.biteRuns || []).length > 0 && (
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#b45309", flexShrink: 0 }}>{goal.biteRuns.join(", ")}</span>
+            )}
           </div>
         )}
         {!isDur && goal.timerDuration && ((goal.intervals || []).length > 0 || (goal.correct || 0) + (goal.incorrect || 0) > 0) && (
@@ -1160,13 +1167,19 @@ function SummaryLine({ goal, index }) {
     dataStr = timerLabel ? `${total}x / ${timerLabel}` : `${total}x`;
   }
   const supAgg = Object.entries(goal.sup || {}).filter(([c2, b]) => (b.c || 0) + (b.i || 0) > 0);
-  if (goal.type === "percent" && supAgg.length > 0 && (goal.items || []).length === 0) {
+  if (supAgg.length > 0 && goal.type !== "duration" && (goal.items || []).length === 0) {
+    const wr = goal.support || "ind";
+    const acc = new Set(["ind", "sp", wr, ...(goal.supportOk || [])]);
+    const parts = [];
+    if (correct + incorrect > 0) parts.push(goal.type === "percent" ? `${correct}/${correct + incorrect} ${wr}` : `${correct}x ${wr}`);
+    supAgg.forEach(([cd, b]) => {
+      const t3 = (b.c || 0) + (b.i || 0);
+      const frag = goal.type === "percent" ? `${b.c || 0}/${t3}` : `${b.c || 0}x`;
+      parts.push(acc.has(cd) ? `${frag} ${cd}` : `${frag} with ${cd}`);
+    });
     const allT = correct + incorrect + supAgg.reduce((s, [c2, b]) => s + (b.c || 0) + (b.i || 0), 0);
-    const indPct = allT > 0 ? Math.round((correct / allT) * 100) : 0;
-    dataStr = `${correct}/${allT} — ${indPct}% ind` + supAgg.map(([c2, b]) => `; with ${c2} ${b.c || 0}/${(b.c || 0) + (b.i || 0)}`).join("");
-  }
-  if (goal.type === "tally" && supAgg.length > 0 && (goal.items || []).length === 0) {
-    dataStr = `${correct}x ind` + supAgg.map(([c2, b]) => `; ${b.c || 0}x with ${c2}`).join("");
+    const accC = correct + supAgg.reduce((s, [cd, b]) => s + (acc.has(cd) ? (b.c || 0) : 0), 0);
+    dataStr = parts.join(", ") + (goal.type === "percent" ? `; ${accC}/${allT} — ${allT > 0 ? Math.round((accC / allT) * 100) : 0}% at level` : `; ${accC}x at level`);
   }
   if ((goal.intervals || []).length > 0 && (goal.items || []).length === 0) {
     const ivs = [...goal.intervals, { c: correct, i: incorrect }].filter(iv => (iv.c || 0) + (iv.i || 0) > 0);
@@ -1185,6 +1198,7 @@ function SummaryLine({ goal, index }) {
     }).join(", ");
     if (ctxSeg) dataStr += `; ${ctxSeg}`;
   }
+  if ((goal.biteRuns || []).length > 0) dataStr += `; bites per run: ${goal.biteRuns.join(", ")}`;
   if (goal.type === "duration") {
     dataStr = (goal.durations || []).length
       ? `longest ${formatTime(Math.max(...goal.durations))} (${goal.durations.length} stretch${goal.durations.length === 1 ? "" : "es"})`
@@ -1210,7 +1224,7 @@ function applyTap(goal, field, delta, onUpdate) {
   const hasItems = (goal.items || []).length > 0;
   const selSup = goal.usedSupport || "ind";
   const wrSup = goal.support || "ind";
-  const offLevel = !hasItems && selSup !== "ind" && selSup !== "sp" && selSup !== wrSup && !(goal.supportOk || []).includes(selSup);
+  const offLevel = !hasItems && selSup !== wrSup;
   if (hasItems) {
     onUpdate(goal.id, (prev) => {
       const idx = Math.min(prev.activeItem || 0, (prev.items || []).length - 1);
@@ -1824,13 +1838,19 @@ function App() {
         ? `${correct}/${total} — ${pct ?? "—"}% accuracy`
         : timerLabel ? `${total}x / ${timerLabel}` : `${total}x`;
       const supAgg = Object.entries(g.sup || {}).filter(([c2, b]) => (b.c || 0) + (b.i || 0) > 0);
-      if (g.type === "percent" && supAgg.length > 0 && (g.items || []).length === 0) {
+      if (supAgg.length > 0 && g.type !== "duration" && (g.items || []).length === 0) {
+        const wr = g.support || "ind";
+        const acc = new Set(["ind", "sp", wr, ...(g.supportOk || [])]);
+        const parts = [];
+        if (correct + incorrect > 0) parts.push(g.type === "percent" ? `${correct}/${correct + incorrect} ${wr}` : `${correct}x ${wr}`);
+        supAgg.forEach(([cd, b]) => {
+          const t3 = (b.c || 0) + (b.i || 0);
+          const frag = g.type === "percent" ? `${b.c || 0}/${t3}` : `${b.c || 0}x`;
+          parts.push(acc.has(cd) ? `${frag} ${cd}` : `${frag} with ${cd}`);
+        });
         const allT = correct + incorrect + supAgg.reduce((s, [c2, b]) => s + (b.c || 0) + (b.i || 0), 0);
-        const indPct = allT > 0 ? Math.round((correct / allT) * 100) : 0;
-        dataStr = `${correct}/${allT} — ${indPct}% ind` + supAgg.map(([c2, b]) => `; with ${c2} ${b.c || 0}/${(b.c || 0) + (b.i || 0)}`).join("");
-      }
-      if (g.type === "tally" && supAgg.length > 0 && (g.items || []).length === 0) {
-        dataStr = `${correct}x ind` + supAgg.map(([c2, b]) => `; ${b.c || 0}x with ${c2}`).join("");
+        const accC = correct + supAgg.reduce((s, [cd, b]) => s + (acc.has(cd) ? (b.c || 0) : 0), 0);
+        dataStr = parts.join(", ") + (g.type === "percent" ? `; ${accC}/${allT} — ${allT > 0 ? Math.round((accC / allT) * 100) : 0}% at level` : `; ${accC}x at level`);
       }
       if ((g.intervals || []).length > 0 && (g.items || []).length === 0) {
         const ivs = [...g.intervals, { c: correct, i: incorrect }].filter(iv => (iv.c || 0) + (iv.i || 0) > 0);
@@ -1849,6 +1869,7 @@ function App() {
         }).join(", ");
         if (ctxSeg) dataStr += `; ${ctxSeg}`;
       }
+      if ((g.biteRuns || []).length > 0) dataStr += `; bites per run: ${g.biteRuns.join(", ")}`;
       if (g.type === "duration") {
         dataStr = (g.durations || []).length
           ? `longest ${formatTime(Math.max(...g.durations))} (${g.durations.length} stretch${g.durations.length === 1 ? "" : "es"})`
@@ -1887,13 +1908,19 @@ function App() {
         ? `${correct}/${total} — ${pct ?? "—"}% accuracy`
         : timerLabel ? `${total}x / ${timerLabel}` : `${total}x`;
       const supAgg = Object.entries(g.sup || {}).filter(([c2, b]) => (b.c || 0) + (b.i || 0) > 0);
-      if (g.type === "percent" && supAgg.length > 0 && (g.items || []).length === 0) {
+      if (supAgg.length > 0 && g.type !== "duration" && (g.items || []).length === 0) {
+        const wr = g.support || "ind";
+        const acc = new Set(["ind", "sp", wr, ...(g.supportOk || [])]);
+        const parts = [];
+        if (correct + incorrect > 0) parts.push(g.type === "percent" ? `${correct}/${correct + incorrect} ${wr}` : `${correct}x ${wr}`);
+        supAgg.forEach(([cd, b]) => {
+          const t3 = (b.c || 0) + (b.i || 0);
+          const frag = g.type === "percent" ? `${b.c || 0}/${t3}` : `${b.c || 0}x`;
+          parts.push(acc.has(cd) ? `${frag} ${cd}` : `${frag} with ${cd}`);
+        });
         const allT = correct + incorrect + supAgg.reduce((s, [c2, b]) => s + (b.c || 0) + (b.i || 0), 0);
-        const indPct = allT > 0 ? Math.round((correct / allT) * 100) : 0;
-        dataStr = `${correct}/${allT} — ${indPct}% ind` + supAgg.map(([c2, b]) => `; with ${c2} ${b.c || 0}/${(b.c || 0) + (b.i || 0)}`).join("");
-      }
-      if (g.type === "tally" && supAgg.length > 0 && (g.items || []).length === 0) {
-        dataStr = `${correct}x ind` + supAgg.map(([c2, b]) => `; ${b.c || 0}x with ${c2}`).join("");
+        const accC = correct + supAgg.reduce((s, [cd, b]) => s + (acc.has(cd) ? (b.c || 0) : 0), 0);
+        dataStr = parts.join(", ") + (g.type === "percent" ? `; ${accC}/${allT} — ${allT > 0 ? Math.round((accC / allT) * 100) : 0}% at level` : `; ${accC}x at level`);
       }
       if ((g.intervals || []).length > 0 && (g.items || []).length === 0) {
         const ivs = [...g.intervals, { c: correct, i: incorrect }].filter(iv => (iv.c || 0) + (iv.i || 0) > 0);
@@ -1912,6 +1939,7 @@ function App() {
         }).join(", ");
         if (ctxSeg) dataStr += `; ${ctxSeg}`;
       }
+      if ((g.biteRuns || []).length > 0) dataStr += `; bites per run: ${g.biteRuns.join(", ")}`;
       if (g.type === "duration") {
         dataStr = (g.durations || []).length
           ? `longest ${formatTime(Math.max(...g.durations))} (${g.durations.length} stretch${g.durations.length === 1 ? "" : "es"})`
@@ -1967,15 +1995,19 @@ function App() {
             ? (g.durations || []).length > 0
             : (g.items || []).length > 0
               ? g.items.some(it => (it.correct || 0) + (it.incorrect || 0) > 0 || it.att)
-              : (g.correct || 0) + (g.incorrect || 0) + Object.values(g.sup || {}).reduce((s, b) => s + (b.c || 0) + (b.i || 0), 0) + (g.intervals || []).reduce((s, iv) => s + (iv.c || 0) + (iv.i || 0), 0) > 0))
+              : (g.correct || 0) + (g.incorrect || 0) + Object.values(g.sup || {}).reduce((s, b) => s + (b.c || 0) + (b.i || 0), 0) + (g.intervals || []).reduce((s, iv) => s + (iv.c || 0) + (iv.i || 0), 0) + (g.biteRuns || []).length > 0))
           .map(g => {
-            const pc = Object.values(g.sup || {}).reduce((s, b) => s + (b.c || 0), 0);
-            const pi = Object.values(g.sup || {}).reduce((s, b) => s + (b.i || 0), 0);
+            const accSet = new Set(["ind", "sp", g.support || "ind", ...(g.supportOk || [])]);
+            const accB = Object.entries(g.sup || {}).reduce((s, [cd, b]) => s + (accSet.has(cd) ? (b.c || 0) : 0), 0);
+            const pT = Object.values(g.sup || {}).reduce((s, b) => s + (b.c || 0) + (b.i || 0), 0);
             const ivC = (g.intervals || []).reduce((s, iv) => s + (iv.c || 0), 0);
             const ivI = (g.intervals || []).reduce((s, iv) => s + (iv.i || 0), 0);
-            const base = { tid: g.tid, label: g.label, type: g.type, correct: (g.correct || 0) + ivC, incorrect: (g.incorrect || 0) + ivI + pc + pi, support: g.support || "ind" };
+            const allT2 = (g.correct || 0) + (g.incorrect || 0) + pT + ivC + ivI;
+            const accC2 = (g.correct || 0) + ivC + accB;
+            const base = { tid: g.tid, label: g.label, type: g.type, correct: accC2, incorrect: allT2 - accC2, support: g.support || "ind" };
             if (ivC + ivI > 0) base.intervals = g.intervals;
-            if (pc + pi > 0) base.sup = g.sup;
+            if (pT > 0) base.sup = g.sup;
+            if ((g.biteRuns || []).length > 0) base.biteRuns = g.biteRuns;
             const cdT = ["str", "unstr"].reduce((s, cx) => s + (((g.ctxData || {})[cx] || {}).c || 0) + (((g.ctxData || {})[cx] || {}).i || 0), 0);
             if (cdT > 0) base.ctx = g.ctxData;
             if (g.type === "duration" && (g.durations || []).length > 0) {
