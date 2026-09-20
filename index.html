@@ -168,6 +168,7 @@ function newGoal() {
     biteCount: 0,
     biteRuns: [],
     intervals: [],
+    zeroLogged: false,
     items: [],
     activeItem: 0,
     fullGoal: "",
@@ -239,6 +240,7 @@ function normalizeGoalFields(g) {
     biteTarget: typeof g.biteTarget === "number" ? g.biteTarget : 0,
     biteCount: typeof g.biteCount === "number" ? g.biteCount : 0,
     biteRuns: Array.isArray(g.biteRuns) ? g.biteRuns.filter(n => typeof n === "number") : [],
+    zeroLogged: !!g.zeroLogged,
     intervals: Array.isArray(g.intervals) ? g.intervals.map(iv => ({ c: (iv && iv.c) || 0, i: (iv && iv.i) || 0 })) : [],
     fullGoal: g.fullGoal || "",
     target: typeof g.target === "number" ? g.target : null,
@@ -274,6 +276,16 @@ function itemPointsFor(history, tid, name) {
     });
   });
   return pts;
+}
+
+function goalHasData(g) {
+  if (g.zeroLogged) return true;
+  if (g.type === "duration") return (g.durations || []).length > 0;
+  if ((g.items || []).length > 0) return g.items.some(it => (it.correct || 0) + (it.incorrect || 0) > 0 || it.att);
+  return (g.correct || 0) + (g.incorrect || 0)
+    + Object.values(g.sup || {}).reduce((s, b) => s + (b.c || 0) + (b.i || 0), 0)
+    + (g.intervals || []).reduce((s, iv) => s + (iv.c || 0) + (iv.i || 0), 0)
+    + (g.biteRuns || []).length + (g.biteCount || 0) > 0;
 }
 
 function itemsSummary(g) {
@@ -579,7 +591,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
     if (type === "tally") {
       if (isDur) update({ durations: [] });
       else if (hasItems) onUpdate(goal.id, (prev) => ({ ...prev, items: (prev.items || []).map(it => ({ ...it, correct: 0, incorrect: 0 })) }));
-      else update({ correct: 0, incorrect: 0, sup: {}, ctxData: { str: { c: 0, i: 0 }, unstr: { c: 0, i: 0 } }, biteCount: 0, biteRuns: [], intervals: [] });
+      else update({ correct: 0, incorrect: 0, sup: {}, ctxData: { str: { c: 0, i: 0 }, unstr: { c: 0, i: 0 } }, biteCount: 0, biteRuns: [], intervals: [], zeroLogged: false });
     }
     if (type === "timer") update({ timerRemaining: goal.timerDuration, timerRunning: false, timerAlert: false });
     setConfirm(null);
@@ -875,6 +887,15 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
             background: "#f8fafc", color: "#64748b", fontSize: 12, fontWeight: 700, cursor: "pointer",
             fontFamily: "inherit",
           }}>↩ Undo</button>
+          {goal.type === "tally" && !hasItems && !isDur && (
+            <button onClick={() => update({ zeroLogged: !goal.zeroLogged })} title="Log this goal with zero occurrences" style={{
+              padding: "14px 10px", borderRadius: 12,
+              border: `2px solid ${goal.zeroLogged ? "#4f46e5" : "#e2e8f0"}`,
+              background: goal.zeroLogged ? "#ede9fe" : "#f8fafc",
+              color: goal.zeroLogged ? "#4f46e5" : "#64748b",
+              fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+            }}>0</button>
+          )}
           {hasItems && !isDur && (
             <button onClick={() => onUpdate(goal.id, (prev) => {
               const idx = Math.min(prev.activeItem || 0, (prev.items || []).length - 1);
@@ -1355,6 +1376,7 @@ function BankModal({ onPick, onClose, targetName }) {
 }
 
 function StudentBar({ roster, selectedId, onSelect, onAdd, onManage, onHistory, onBank, onCompact, isCompact }) {
+  const [showPick, setShowPick] = useState(false);
   const pill = (active) => ({
     padding: "7px 14px", borderRadius: 999, border: "2px solid",
     borderColor: active ? "#4f46e5" : "#e2e8f0",
@@ -1371,15 +1393,39 @@ function StudentBar({ roster, selectedId, onSelect, onAdd, onManage, onHistory, 
         scrollbarWidth: "none",
       }}>
         <button onClick={() => onSelect("quick")} style={pill(selectedId === "quick")}>Quick</button>
-        {roster.map(s => (
+        {roster.length <= 5 ? roster.map(s => (
           <button key={s.id} onClick={() => onSelect(s.id)} style={pill(selectedId === s.id)}>{s.name}</button>
-        ))}
+        )) : (
+          <React.Fragment>
+            {selectedId !== "quick" && roster.find(s => s.id === selectedId) && (
+              <button onClick={() => setShowPick(true)} style={pill(true)}>{roster.find(s => s.id === selectedId).name}</button>
+            )}
+            <button onClick={() => setShowPick(true)} style={{
+              padding: "7px 14px", borderRadius: 999, border: "2px solid #4f46e5",
+              background: "#fff", color: "#4f46e5", fontWeight: 700, fontSize: 13,
+              cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0,
+            }}>▾ all {roster.length}</button>
+          </React.Fragment>
+        )}
         <button onClick={onAdd} style={{
           padding: "7px 14px", borderRadius: 999, border: "2px dashed #c7d2fe",
           background: "#eef2ff", color: "#4f46e5", fontWeight: 700, fontSize: 13,
           cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0,
         }}>+ Student</button>
       </div>
+      {showPick && (
+        <div onClick={() => setShowPick(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, maxWidth: 420, width: "92%", maxHeight: "80vh", overflowY: "auto", padding: 16, boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "#1e293b", marginBottom: 10 }}>Choose student</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <button onClick={() => { onSelect("quick"); setShowPick(false); }} style={pill(selectedId === "quick")}>Quick session</button>
+              {roster.map(s => (
+                <button key={s.id} onClick={() => { onSelect(s.id); setShowPick(false); }} style={pill(selectedId === s.id)}>{s.name}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
       {selectedId !== "quick" && (
         <button onClick={onHistory} title="Session history" style={{
           padding: "7px 10px", borderRadius: 10, border: "2px solid #e2e8f0",
@@ -1830,7 +1876,7 @@ function App() {
       weekday: "long", month: "long", day: "numeric", year: "numeric"
     });
     let html = `<p><strong>${dateStr}</strong></p>`;
-    goals.filter(g => !g.skipped).forEach((g, i) => {
+    goals.filter(g => !g.skipped && goalHasData(g)).forEach((g, i) => {
       const label = g.label || `Goal ${i + 1}`;
       const correct = g.correct ?? 0;
       const incorrect = g.incorrect ?? 0;
@@ -1903,7 +1949,7 @@ function App() {
       weekday: "long", month: "long", day: "numeric", year: "numeric"
     });
     let lines = [dateStr, ""];
-    goals.filter(g => !g.skipped).forEach((g, i) => {
+    goals.filter(g => !g.skipped && goalHasData(g)).forEach((g, i) => {
       const label = g.label || `Goal ${i + 1}`;
       const correct = g.correct ?? 0;
       const incorrect = g.incorrect ?? 0;
@@ -2000,11 +2046,7 @@ function App() {
       let roster = prev.roster;
       if (prev.selectedId !== "quick") {
         const logged = cur.goals
-          .filter(g => !g.skipped && (g.type === "duration"
-            ? (g.durations || []).length > 0
-            : (g.items || []).length > 0
-              ? g.items.some(it => (it.correct || 0) + (it.incorrect || 0) > 0 || it.att)
-              : (g.correct || 0) + (g.incorrect || 0) + Object.values(g.sup || {}).reduce((s, b) => s + (b.c || 0) + (b.i || 0), 0) + (g.intervals || []).reduce((s, iv) => s + (iv.c || 0) + (iv.i || 0), 0) + (g.biteRuns || []).length + (g.biteCount || 0) > 0))
+          .filter(g => !g.skipped && goalHasData(g))
           .map(g => {
             const accSet = new Set(["ind", "sp", g.support || "ind", ...(g.supportOk || [])]);
             const accB = Object.entries(g.sup || {}).reduce((s, [cd, b]) => s + (accSet.has(cd) ? (b.c || 0) : 0), 0);
