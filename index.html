@@ -1280,6 +1280,7 @@ function applyTap(goal, field, delta, onUpdate) {
 }
 
 function CompactLine({ goal, index, onTap, at, onUpdate }) {
+  const [itemMenu, setItemMenu] = useState(false);
   let s;
   const hasIt = (goal.items || []).length > 0;
   const aiC = hasIt ? Math.min(goal.activeItem || 0, goal.items.length - 1) : 0;
@@ -1315,7 +1316,35 @@ function CompactLine({ goal, index, onTap, at, onUpdate }) {
       {goal.done && <span style={{ fontSize: 11, color: "#16a34a", fontWeight: 700, flexShrink: 0 }}>✓</span>}
       <span style={{ fontSize: 13, fontWeight: 700, color: "#4f46e5", fontFamily: "ui-monospace, Menlo, monospace", flexShrink: 0 }}>{s}</span>
       {hasIt && goal.items[aiC] && (
-        <span style={{ fontSize: 10, fontWeight: 700, color: "#4f46e5", background: "#ede9fe", borderRadius: 999, padding: "2px 7px", flexShrink: 0, maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{goal.items[aiC].name}</span>
+        <span style={{ position: "relative", flexShrink: 0 }}>
+          <button onClick={(e) => { e.stopPropagation(); setItemMenu(v => !v); }} style={{
+            fontSize: 10, fontWeight: 700, color: "#4f46e5", background: "#ede9fe", border: "none",
+            borderRadius: 999, padding: "4px 8px", maxWidth: 84, overflow: "hidden", textOverflow: "ellipsis",
+            whiteSpace: "nowrap", cursor: "pointer", fontFamily: "inherit", display: "block",
+          }}>{goal.items[aiC].name} ▾</button>
+          {itemMenu && (
+            <>
+              <div onClick={(e) => { e.stopPropagation(); setItemMenu(false); }} style={{ position: "fixed", inset: 0, zIndex: 50 }} />
+              <div onClick={(e) => e.stopPropagation()} style={{
+                position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 51, minWidth: 140, maxHeight: 260, overflowY: "auto",
+                background: "#fff", border: "1.5px solid #e2e8f0", borderRadius: 10, boxShadow: "0 6px 20px rgba(0,0,0,0.15)", padding: 4,
+              }}>
+                {goal.items.map((it, i) => {
+                  const t2 = (it.correct || 0) + (it.incorrect || 0);
+                  const lbl = goal.type === "percent" ? `${it.correct || 0}/${t2}` : `${it.correct || 0}x`;
+                  return (
+                    <button key={i} onClick={() => { onUpdate(goal.id, (prev) => ({ ...prev, activeItem: i })); setItemMenu(false); }} style={{
+                      display: "flex", justifyContent: "space-between", gap: 10, width: "100%", textAlign: "left",
+                      padding: "9px 10px", borderRadius: 7, border: "none", cursor: "pointer", fontFamily: "inherit",
+                      background: i === aiC ? "#ede9fe" : "transparent", color: i === aiC ? "#3c3489" : "#334155",
+                      fontSize: 13, fontWeight: i === aiC ? 700 : 500,
+                    }}><span>{it.name}</span><span style={{ color: "#94a3b8", fontWeight: 600 }}>{lbl}</span></button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </span>
       )}
       {goal.type !== "duration" && (
         <button onClick={(e) => { e.stopPropagation(); if (!locked) applyTap(goal, "correct", 1, onUpdate); }} disabled={locked} style={{
