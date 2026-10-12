@@ -1876,8 +1876,13 @@ function App() {
       weekday: "long", month: "long", day: "numeric", year: "numeric"
     });
     let html = `<p><strong>${dateStr}</strong></p>`;
-    goals.filter(g => !g.skipped && goalHasData(g)).forEach((g, i) => {
+    goals.filter(g => !g.skipped && (goalHasData(g) || (g.notes || "").trim())).forEach((g, i) => {
       const label = g.label || `Goal ${i + 1}`;
+      // Goal with a note but no data: copy just the note.
+      if (!goalHasData(g)) {
+        html += `<p>${label} — ${g.notes.trim()}</p>`;
+        return;
+      }
       const correct = g.correct ?? 0;
       const incorrect = g.incorrect ?? 0;
       const total = g.type === "percent" ? correct + incorrect : correct;
@@ -1949,8 +1954,14 @@ function App() {
       weekday: "long", month: "long", day: "numeric", year: "numeric"
     });
     let lines = [dateStr, ""];
-    goals.filter(g => !g.skipped && goalHasData(g)).forEach((g, i) => {
+    goals.filter(g => !g.skipped && (goalHasData(g) || (g.notes || "").trim())).forEach((g, i) => {
       const label = g.label || `Goal ${i + 1}`;
+      // Goal with a note but no data: copy just the note.
+      if (!goalHasData(g)) {
+        lines.push(`${label} — ${g.notes.trim()}`);
+        lines.push("");
+        return;
+      }
       const correct = g.correct ?? 0;
       const incorrect = g.incorrect ?? 0;
       const total = g.type === "percent" ? correct + incorrect : correct;
