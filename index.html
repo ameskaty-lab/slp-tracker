@@ -146,6 +146,79 @@ function makeId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
+// ---- Planning helpers (schedule, buildings, materials) ----
+const WEEKDAYS = [
+  { d: 1, s: "Mon", l: "Monday" }, { d: 2, s: "Tue", l: "Tuesday" }, { d: 3, s: "Wed", l: "Wednesday" },
+  { d: 4, s: "Thu", l: "Thursday" }, { d: 5, s: "Fri", l: "Friday" },
+];
+const NO_BUILDING = "No building";
+
+function todayKey() {
+  const n = new Date();
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+}
+
+function buildingOf(s) {
+  return ((s && s.building) || "").trim() || NO_BUILDING;
+}
+
+// Group students by building, keeping the order buildings first appear in.
+function groupByBuilding(students) {
+  const groups = [];
+  students.forEach(s => {
+    const b = buildingOf(s);
+    let g = groups.find(x => x.building === b);
+    if (!g) { g = { building: b, students: [] }; groups.push(g); }
+    g.students.push(s);
+  });
+  return groups;
+}
+
+function buildingNames(roster) {
+  const names = [];
+  roster.forEach(s => { const b = buildingOf(s); if (b !== NO_BUILDING && !names.includes(b)) names.push(b); });
+  return names;
+}
+
+// Put a student id into a day list right after the last student from the same building.
+function insertByBuilding(ids, id, roster) {
+  if (ids.includes(id)) return ids;
+  const b = buildingOf(roster.find(s => s.id === id));
+  let at = -1;
+  ids.forEach((x, i) => { if (buildingOf(roster.find(s => s.id === x)) === b) at = i; });
+  const next = [...ids];
+  if (at === -1) next.push(id); else next.splice(at + 1, 0, id);
+  return next;
+}
+
+// Move a student up/down within a day list.
+function moveInList(ids, id, dir) {
+  const i = ids.indexOf(id), j = i + dir;
+  if (i < 0 || j < 0 || j >= ids.length) return ids;
+  const next = [...ids];
+  [next[i], next[j]] = [next[j], next[i]];
+  return next;
+}
+
+// Move a whole building's group of students up/down within a day list.
+function moveGroupInList(ids, building, dir, roster) {
+  const groups = groupByBuilding(ids.map(id => roster.find(s => s.id === id)).filter(Boolean));
+  const i = groups.findIndex(g => g.building === building), j = i + dir;
+  if (i < 0 || j < 0 || j >= groups.length) return ids;
+  [groups[i], groups[j]] = [groups[j], groups[i]];
+  return groups.flatMap(g => g.students.map(s => s.id));
+}
+
+const MatContext = React.createContext({ lib: [], setLib: () => {} });
+
+function materialsText(goal, lib) {
+  const set = (lib || []).find(m => m.id === goal.matId);
+  const parts = [];
+  if (set && (set.items || "").trim()) parts.push(set.items.trim());
+  if ((goal.matTweak || "").trim()) parts.push(`+ ${goal.matTweak.trim()}`);
+  return parts.join(" · ");
+}
+
 function newGoal() {
   return {
     id: makeId("goal"),
@@ -171,6 +244,8 @@ function newGoal() {
     zeroLogged: false,
     items: [],
     activeItem: 0,
+    matId: "",
+    matTweak: "",
     fullGoal: "",
     target: null,
     targetOf: null,
@@ -202,6 +277,8 @@ function goalFromTemplate(t) {
     biteTarget: typeof t.biteTarget === "number" ? t.biteTarget : 0,
     items: (t.items || []).map(it => ({ name: typeof it === "string" ? it : String((it && it.name) || ""), correct: 0, incorrect: 0, att: false })),
     activeItem: 0,
+    matId: typeof t.matId === "string" ? t.matId : "",
+    matTweak: typeof t.matTweak === "string" ? t.matTweak : "",
   };
 }
 
@@ -220,6 +297,8 @@ function templatesFromGoals(goals) {
     supportOk: Array.isArray(g.supportOk) ? g.supportOk : [],
     biteTarget: typeof g.biteTarget === "number" ? g.biteTarget : 0,
     items: (g.items || []).map(it => ({ name: it.name })),
+    matId: g.matId || "",
+    matTweak: g.matTweak || "",
   }));
 }
 
@@ -249,6 +328,9 @@ function normalizeGoalFields(g) {
     ruleN: typeof g.ruleN === "number" ? g.ruleN : 3,
     items: Array.isArray(g.items) ? g.items.map(it => ({ name: String((it && it.name) || (typeof it === "string" ? it : "")), correct: (it && it.correct) || 0, incorrect: (it && it.incorrect) || 0, att: !!(it && it.att) })) : [],
     activeItem: typeof g.activeItem === "number" ? g.activeItem : 0,
+    matId: typeof g.matId === "string" ? g.matId : "",
+    matTweak: typeof g.matTweak === "string" ? g.matTweak : "",
+    notes: typeof g.notes === "string" ? g.notes : "",
   };
 }
 
@@ -468,6 +550,365 @@ function PromptModal({ title, placeholder, initialValue, onSubmit, onCancel }) {
   );
 }
 
+const headerIcon = (active) => ({
+  width: 32, height: 30, borderRadius: 8, border: "none", cursor: "pointer", fontSize: 14,
+  background: active ? "#fff" : "rgba(255,255,255,0.18)", color: active ? "#4f46e5" : "#fff",
+  display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0,
+});
+const chip = (active) => ({
+  padding: "6px 12px", borderRadius: 999, border: "2px solid",
+  borderColor: active ? "#4f46e5" : "#e2e8f0",
+  background: active ? "#ede9fe" : "#fff",
+  color: active ? "#4f46e5" : "#475569",
+  fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit",
+});
+const smallBtn = {
+  padding: "4px 8px", borderRadius: 7, border: "1.5px solid #e2e8f0",
+  background: "#f8fafc", color: "#64748b", fontSize: 12, fontWeight: 700,
+  cursor: "pointer", fontFamily: "inherit",
+};
+const sectionLabel = { fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 1 };
+const overlay = { position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 };
+const modalBox = { background: "#fff", borderRadius: 16, maxWidth: 420, width: "92%", maxHeight: "84vh", overflowY: "auto", padding: 18, boxShadow: "0 8px 32px rgba(0,0,0,0.18)" };
+
+// Add a student (name + building), or change a student's building (askName = false).
+function StudentInfoModal({ title, askName, initialName, initialBuilding, buildings, onSubmit, onCancel }) {
+  const [name, setName] = useState(initialName || "");
+  const [building, setBuilding] = useState(initialBuilding || "");
+  const [typing, setTyping] = useState(buildings.length === 0);
+  const ok = !askName || name.trim();
+  const inputStyle = {
+    width: "100%", borderRadius: 9, border: "1.5px solid #e2e8f0", padding: "10px 12px",
+    fontSize: 15, fontFamily: "inherit", outline: "none", color: "#1e293b", boxSizing: "border-box",
+  };
+  return (
+    <div style={overlay}>
+      <div style={modalBox}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: "#1e293b", marginBottom: 14, textAlign: "center" }}>{title}</div>
+        {askName && (
+          <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="Student name or initials..." style={{ ...inputStyle, marginBottom: 14 }} />
+        )}
+        <div style={{ ...sectionLabel, marginBottom: 6 }}>Building</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+          {buildings.map(b => (
+            <button key={b} onClick={() => { setBuilding(b); setTyping(false); }} style={chip(!typing && building === b)}>{b}</button>
+          ))}
+          <button onClick={() => { setTyping(true); setBuilding(""); }} style={{ ...chip(typing), borderStyle: "dashed" }}>+ New building</button>
+        </div>
+        {typing && (
+          <input autoFocus={!askName} value={building} onChange={e => setBuilding(e.target.value)} placeholder="Building name..." style={{ ...inputStyle, marginBottom: 8 }} />
+        )}
+        <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 14 }}>Optional — you can set or change this later in Manage Roster.</div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onCancel} style={{ flex: 1, padding: "10px", borderRadius: 9, border: "1.5px solid #e2e8f0", background: "#f8fafc", color: "#64748b", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+          <button onClick={() => { if (ok) onSubmit(name.trim(), building.trim()); }} style={{ flex: 1, padding: "10px", borderRadius: 9, border: "none", background: "#4f46e5", opacity: ok ? 1 : 0.5, color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Save</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Pick students, grouped by building. A preferred building's kids are listed first.
+// multi: toggle several (checkmarks); otherwise one tap picks and closes.
+function StudentPicker({ title, roster, excludeIds, selectedIds, preferBuilding, multi, onPick, onClose }) {
+  const avail = roster.filter(s => !(excludeIds || []).includes(s.id));
+  let groups = groupByBuilding(avail);
+  const named = groups.filter(g => g.building !== NO_BUILDING);
+  const none = groups.filter(g => g.building === NO_BUILDING);
+  groups = [...named, ...none];
+  if (preferBuilding) {
+    const i = groups.findIndex(g => g.building === preferBuilding);
+    if (i > 0) groups = [groups[i], ...groups.filter((_, k) => k !== i)];
+  }
+  const sel = new Set(selectedIds || []);
+  return (
+    <div onClick={onClose} style={overlay}>
+      <div onClick={e => e.stopPropagation()} style={modalBox}>
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
+          <span style={{ fontSize: 15, fontWeight: 700, color: "#1e293b", flex: 1 }}>{title}</span>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: multi ? "#4f46e5" : "#cbd5e1", fontSize: multi ? 14 : 18, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{multi ? "Done" : "✕"}</button>
+        </div>
+        {avail.length === 0 && <div style={{ fontSize: 13, color: "#94a3b8" }}>No other students to add.</div>}
+        {groups.map((g, gi) => (
+          <div key={g.building} style={{ marginBottom: 12 }}>
+            <div style={{ ...sectionLabel, marginBottom: 6, color: gi === 0 && preferBuilding === g.building ? "#4f46e5" : "#94a3b8" }}>
+              {g.building}{gi === 0 && preferBuilding === g.building ? " · same building" : ""}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {g.students.map(s => (
+                <button key={s.id} onClick={() => { onPick(s.id); if (!multi) onClose(); }} style={chip(sel.has(s.id))}>
+                  {multi && sel.has(s.id) ? "✓ " : ""}{s.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Materials for one goal: a shared set from the library + a note just for this student.
+function MaterialsRow({ goal, onUpdate }) {
+  const { lib, setLib } = React.useContext(MatContext);
+  const [open, setOpen] = useState(false);
+  const [naming, setNaming] = useState(false);
+  const set = lib.find(m => m.id === goal.matId) || null;
+  const text = materialsText(goal, lib);
+  const update = (fields) => onUpdate(goal.id, (prev) => ({ ...prev, ...fields }));
+  const field = {
+    width: "100%", borderRadius: 8, border: "1.5px solid #e2e8f0", padding: "8px 10px",
+    fontFamily: "inherit", fontSize: 13, color: "#334155", outline: "none", background: "#fff", boxSizing: "border-box",
+  };
+  return (
+    <div style={{ marginBottom: 10 }}>
+      {naming && (
+        <PromptModal
+          title="New materials set"
+          placeholder="Set name (e.g., Requesting)..."
+          onSubmit={(name) => {
+            const id = makeId("mat");
+            setLib(l => [...l, { id, name, items: "" }]);
+            update({ matId: id });
+            setNaming(false);
+          }}
+          onCancel={() => setNaming(false)}
+        />
+      )}
+      <button onClick={() => setOpen(v => !v)} style={{
+        display: "flex", alignItems: "flex-start", gap: 6, width: "100%", textAlign: "left",
+        background: "#f8fafc", border: "1.5px solid #e2e8f0", borderRadius: 9, padding: "7px 10px",
+        cursor: "pointer", fontFamily: "inherit",
+      }}>
+        <span style={{ fontSize: 13 }}>🧰</span>
+        <span style={{ flex: 1, fontSize: 13, color: text ? "#334155" : "#94a3b8", lineHeight: 1.4 }}>
+          {set && <strong style={{ color: "#4f46e5" }}>{set.name}{text ? ": " : ""}</strong>}
+          {text || (set ? "" : "Add materials")}
+        </span>
+        <span style={{ fontSize: 12, color: "#cbd5e1" }}>{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <div style={{ border: "1.5px solid #e2e8f0", borderTop: "none", borderRadius: "0 0 9px 9px", padding: 10, marginTop: -4, background: "#fff" }}>
+          <div style={{ ...sectionLabel, marginBottom: 6 }}>Shared set</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
+            <button onClick={() => update({ matId: "" })} style={{ ...chip(!set), fontSize: 12, padding: "4px 10px" }}>None</button>
+            {lib.map(m => (
+              <button key={m.id} onClick={() => update({ matId: m.id })} style={{ ...chip(set && set.id === m.id), fontSize: 12, padding: "4px 10px" }}>{m.name}</button>
+            ))}
+            <button onClick={() => setNaming(true)} style={{ ...chip(false), fontSize: 12, padding: "4px 10px", borderStyle: "dashed", color: "#4f46e5" }}>+ New set</button>
+          </div>
+          {set && (
+            <div style={{ marginBottom: 8 }}>
+              <textarea
+                value={set.items}
+                onChange={e => { const v = e.target.value; setLib(l => l.map(m => (m.id === set.id ? { ...m, items: v } : m))); }}
+                placeholder="Materials in this set (e.g., bubbles, snack, car ramp)..."
+                rows={2}
+                style={{ ...field, resize: "vertical" }}
+              />
+              <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 3 }}>Editing this changes "{set.name}" for every goal that uses it.</div>
+            </div>
+          )}
+          <div style={{ ...sectionLabel, marginBottom: 6 }}>Just for this student</div>
+          <input
+            value={goal.matTweak || ""}
+            onChange={e => update({ matTweak: e.target.value })}
+            placeholder="e.g., use the dinosaur version"
+            style={field}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// One building's group in a day list, with controls to reorder the group.
+function DayGroups({ ids, roster, onMoveGroup, renderStudent }) {
+  const groups = groupByBuilding(ids.map(id => roster.find(s => s.id === id)).filter(Boolean));
+  return groups.map((g, gi) => (
+    <div key={g.building} style={{ marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+        <span style={{ ...sectionLabel, color: "#4f46e5", flex: 1 }}>📍 {g.building}</span>
+        {groups.length > 1 && (
+          <>
+            <button onClick={() => onMoveGroup(g.building, -1)} disabled={gi === 0} style={{ ...smallBtn, opacity: gi === 0 ? 0.4 : 1 }}>▲</button>
+            <button onClick={() => onMoveGroup(g.building, 1)} disabled={gi === groups.length - 1} style={{ ...smallBtn, opacity: gi === groups.length - 1 ? 0.4 : 1 }}>▼</button>
+          </>
+        )}
+      </div>
+      {g.students.map(s => renderStudent(s))}
+    </div>
+  ));
+}
+
+function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, schedule, setDayIds, matLib, setLib, onOpenStudent, onClose }) {
+  const [tab, setTab] = useState("today");
+  const wd = new Date().getDay();
+  const [day, setDay] = useState(wd >= 1 && wd <= 5 ? wd : 1);
+  const [picker, setPicker] = useState(null); // { mode: "add" | "swap" | "week", id? }
+  const [deletingSet, setDeletingSet] = useState(null);
+  const usualHas = (schedule[wd] || []).length > 0;
+  const dateLabel = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  const dayIds = (schedule[day] || []).filter(id => roster.some(s => s.id === id));
+  const tabBtn = (k, label) => (
+    <button onClick={() => setTab(k)} style={{
+      flex: 1, padding: "8px 0", borderRadius: 9, border: "none", cursor: "pointer", fontFamily: "inherit",
+      background: tab === k ? "#fff" : "transparent", color: tab === k ? "#4f46e5" : "#c7d2fe",
+      fontWeight: 700, fontSize: 13,
+    }}>{label}</button>
+  );
+  const card = { background: "#fff", border: "1.5px solid #e2e8f0", borderRadius: 12, padding: "10px 12px", marginBottom: 8 };
+  const usedBy = (id) => roster.reduce((n, s) => n + (s.goals || []).filter(g => g.matId === id).length, 0);
+
+  const renderToday = (s) => {
+    const goals = (s.goals || []).filter(g => (g.label || "").trim() || materialsText(g, matLib));
+    return (
+      <div key={s.id} style={card}>
+        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <button onClick={() => onOpenStudent(s.id)} style={{ background: "none", border: "none", padding: 0, fontSize: 15, fontWeight: 800, color: "#1e293b", cursor: "pointer", fontFamily: "inherit", flex: 1, textAlign: "left" }}>{s.name} ›</button>
+          <button onClick={() => setTodayIds(ids => moveInList(ids, s.id, -1))} style={smallBtn}>▲</button>
+          <button onClick={() => setTodayIds(ids => moveInList(ids, s.id, 1))} style={smallBtn}>▼</button>
+          <button onClick={() => setPicker({ mode: "swap", id: s.id })} style={{ ...smallBtn, color: "#4f46e5", borderColor: "#c7d2fe", background: "#eef2ff" }}>Swap</button>
+          <button onClick={() => setTodayIds(ids => ids.filter(x => x !== s.id))} style={{ ...smallBtn, color: "#ef4444", borderColor: "#fecaca", background: "#fff5f5" }}>✕</button>
+        </div>
+        {(s.notes || "").trim() && <div style={{ fontSize: 13, color: "#334155", marginTop: 6, whiteSpace: "pre-wrap" }}>📝 {s.notes.trim()}</div>}
+        {(s.bcba || "").trim() && <div style={{ fontSize: 12, color: "#64748b", marginTop: 4, whiteSpace: "pre-wrap" }}>🤝 BCBA: {s.bcba.trim()}</div>}
+        {goals.length > 0 && (
+          <div style={{ marginTop: 6 }}>
+            {goals.map((g, i) => {
+              const m = materialsText(g, matLib);
+              return (
+                <div key={g.tid || i} style={{ fontSize: 12, color: "#475569", lineHeight: 1.5 }}>
+                  <span style={{ fontWeight: 700 }}>{g.label || `Goal ${i + 1}`}</span>
+                  {m ? <span> — 🧰 {m}</span> : <span style={{ color: "#cbd5e1" }}> — no materials yet</span>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderWeek = (s) => (
+    <div key={s.id} style={{ ...card, display: "flex", alignItems: "center", gap: 6, padding: "8px 12px" }}>
+      <span style={{ flex: 1, fontSize: 14, fontWeight: 700, color: "#1e293b" }}>{s.name}</span>
+      <button onClick={() => setDayIds(day, ids => moveInList(ids, s.id, -1))} style={smallBtn}>▲</button>
+      <button onClick={() => setDayIds(day, ids => moveInList(ids, s.id, 1))} style={smallBtn}>▼</button>
+      <button onClick={() => setDayIds(day, ids => ids.filter(x => x !== s.id))} style={{ ...smallBtn, color: "#ef4444", borderColor: "#fecaca", background: "#fff5f5" }}>✕</button>
+    </div>
+  );
+
+  const swapStudent = picker && picker.mode === "swap" ? roster.find(s => s.id === picker.id) : null;
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#f8fafc", zIndex: 900, overflowY: "auto" }}>
+      {picker && picker.mode === "add" && (
+        <StudentPicker title="Add for today" roster={roster} excludeIds={todayIds}
+          onPick={(id) => setTodayIds(ids => insertByBuilding(ids, id, roster))} onClose={() => setPicker(null)} />
+      )}
+      {swapStudent && (
+        <StudentPicker title={`Swap ${swapStudent.name} for…`} roster={roster} excludeIds={todayIds}
+          preferBuilding={buildingOf(swapStudent)}
+          onPick={(id) => setTodayIds(ids => ids.map(x => (x === swapStudent.id ? id : x)))} onClose={() => setPicker(null)} />
+      )}
+      {picker && picker.mode === "week" && (
+        <StudentPicker title={`Usual ${WEEKDAYS.find(w => w.d === day).l} list`} roster={roster} multi selectedIds={dayIds}
+          onPick={(id) => setDayIds(day, ids => (ids.includes(id) ? ids.filter(x => x !== id) : insertByBuilding(ids, id, roster)))}
+          onClose={() => setPicker(null)} />
+      )}
+      {deletingSet && (
+        <ConfirmModal
+          message={`Delete the "${deletingSet.name}" set? Goals using it will just show their own notes.`}
+          confirmLabel="Delete"
+          onConfirm={() => { setLib(l => l.filter(m => m.id !== deletingSet.id)); setDeletingSet(null); }}
+          onCancel={() => setDeletingSet(null)}
+        />
+      )}
+      <div style={{ maxWidth: 480, margin: "0 auto", paddingBottom: 40 }}>
+        <div style={{ background: "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)", padding: "18px 16px 12px", color: "#fff" }}>
+          <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
+            <span style={{ fontSize: 20, fontWeight: 800, flex: 1 }}>Plan</span>
+            <button onClick={onClose} style={{ background: "rgba(255,255,255,0.2)", border: "none", color: "#fff", borderRadius: 9, padding: "6px 12px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Done</button>
+          </div>
+          <div style={{ display: "flex", gap: 4, background: "rgba(0,0,0,0.15)", borderRadius: 11, padding: 3 }}>
+            {tabBtn("today", "Today")}{tabBtn("week", "Week")}{tabBtn("materials", "Materials")}
+          </div>
+        </div>
+
+        <div style={{ padding: "14px 16px" }}>
+          {tab === "today" && (
+            <>
+              <div style={{ fontSize: 16, fontWeight: 800, color: "#1e293b" }}>{dateLabel}</div>
+              <div style={{ fontSize: 12, color: "#64748b", marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                {overrideActive ? (
+                  <>
+                    <span>Changed for today only</span>
+                    <button onClick={resetToday} style={{ ...smallBtn, color: "#4f46e5" }}>Reset to usual</button>
+                  </>
+                ) : usualHas ? <span>Your usual list for today</span> : <span>No usual list for today — set one up in the Week tab.</span>}
+              </div>
+              <DayGroups ids={todayIds} roster={roster} renderStudent={renderToday}
+                onMoveGroup={(b, dir) => setTodayIds(ids => moveGroupInList(ids, b, dir, roster))} />
+              <button onClick={() => setPicker({ mode: "add" })} style={{
+                width: "100%", padding: "11px", borderRadius: 12, border: "2px dashed #c7d2fe", background: "#eef2ff",
+                color: "#4f46e5", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit",
+              }}>+ Add a student for today</button>
+            </>
+          )}
+
+          {tab === "week" && (
+            <>
+              <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+                {WEEKDAYS.map(w => (
+                  <button key={w.d} onClick={() => setDay(w.d)} style={{ ...chip(day === w.d), flex: 1, padding: "7px 0" }}>
+                    {w.s}{(schedule[w.d] || []).length ? ` ${(schedule[w.d] || []).filter(id => roster.some(s => s.id === id)).length}` : ""}
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 12, color: "#64748b", marginBottom: 12 }}>
+                Your usual {WEEKDAYS.find(w => w.d === day).l} list. It repeats every week; for a one-day change, use the Today tab.
+              </div>
+              <DayGroups ids={dayIds} roster={roster} renderStudent={renderWeek}
+                onMoveGroup={(b, dir) => setDayIds(day, ids => moveGroupInList(ids, b, dir, roster))} />
+              <button onClick={() => setPicker({ mode: "week" })} style={{
+                width: "100%", padding: "11px", borderRadius: 12, border: "2px dashed #c7d2fe", background: "#eef2ff",
+                color: "#4f46e5", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit",
+              }}>+ Choose students</button>
+            </>
+          )}
+
+          {tab === "materials" && (
+            <>
+              <div style={{ fontSize: 12, color: "#64748b", marginBottom: 12 }}>
+                Shared sets you can link to any goal (tap 🧰 on a goal). Changes here show up everywhere the set is used.
+              </div>
+              {matLib.length === 0 && <div style={{ fontSize: 13, color: "#94a3b8", marginBottom: 12 }}>No sets yet.</div>}
+              {matLib.map(m => (
+                <div key={m.id} style={card}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                    <input value={m.name} onChange={e => { const v = e.target.value; setLib(l => l.map(x => (x.id === m.id ? { ...x, name: v } : x))); }}
+                      style={{ flex: 1, border: "none", borderBottom: "2px solid #e2e8f0", outline: "none", fontSize: 15, fontWeight: 700, color: "#1e293b", fontFamily: "inherit", background: "transparent", padding: "2px 2px" }} />
+                    <span style={{ fontSize: 11, color: "#94a3b8" }}>{usedBy(m.id)} goal{usedBy(m.id) === 1 ? "" : "s"}</span>
+                    <button onClick={() => setDeletingSet(m)} style={{ ...smallBtn, color: "#ef4444", borderColor: "#fecaca", background: "#fff5f5" }}>✕</button>
+                  </div>
+                  <textarea value={m.items} onChange={e => { const v = e.target.value; setLib(l => l.map(x => (x.id === m.id ? { ...x, items: v } : x))); }}
+                    placeholder="Materials (e.g., bubbles, snack, car ramp)..." rows={2}
+                    style={{ width: "100%", borderRadius: 8, border: "1.5px solid #e2e8f0", padding: "8px 10px", fontFamily: "inherit", fontSize: 13, color: "#334155", resize: "vertical", outline: "none", boxSizing: "border-box" }} />
+                </div>
+              ))}
+              <button onClick={() => setLib(l => [...l, { id: makeId("mat"), name: "New set", items: "" }])} style={{
+                width: "100%", padding: "11px", borderRadius: 12, border: "2px dashed #c7d2fe", background: "#eef2ff",
+                color: "#4f46e5", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit",
+              }}>+ New set</button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, atCriteria }) {
   const intervalRef = useRef(null);
   const [confirm, setConfirm] = useState(null);
@@ -680,6 +1121,8 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
             color: "#cbd5e1", fontSize: 18, lineHeight: 1, padding: 2,
           }}>✕</button>
         </div>
+
+        <MaterialsRow goal={goal} onUpdate={onUpdate} />
 
         <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
           {["percent", "tally", "duration"].map(t => (
@@ -1404,7 +1847,7 @@ function BankModal({ onPick, onClose, targetName }) {
   );
 }
 
-function StudentBar({ roster, selectedId, onSelect, onAdd, onManage, onHistory, onBank, onCompact, isCompact }) {
+function StudentBar({ roster, todayStudents, selectedId, onSelect, onAdd, onManage, onHistory, onBank, onCompact, isCompact, onPlan }) {
   const [showPick, setShowPick] = useState(false);
   const pill = (active) => ({
     padding: "7px 14px", borderRadius: 999, border: "2px solid",
@@ -1415,14 +1858,33 @@ function StudentBar({ roster, selectedId, onSelect, onAdd, onManage, onHistory, 
     whiteSpace: "nowrap", flexShrink: 0,
   });
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 16px 0" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 16px 4px" }}>
       <div className="student-bar" style={{
         display: "flex", gap: 6, overflowX: "auto", flex: 1,
         WebkitOverflowScrolling: "touch", paddingBottom: 4,
         scrollbarWidth: "none",
       }}>
         <button onClick={() => onSelect("quick")} style={pill(selectedId === "quick")}>Quick</button>
-        {roster.length <= 5 ? roster.map(s => (
+        {todayStudents.length > 0 ? (
+          <React.Fragment>
+            {groupByBuilding(todayStudents).map(g => (
+              <React.Fragment key={g.building}>
+                <span style={{ fontSize: 9, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.5, alignSelf: "center", whiteSpace: "nowrap", flexShrink: 0, marginLeft: 4, maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis" }}>{g.building === NO_BUILDING ? "" : g.building}</span>
+                {g.students.map(s => (
+                  <button key={s.id} onClick={() => onSelect(s.id)} style={pill(selectedId === s.id)}>{s.name}</button>
+                ))}
+              </React.Fragment>
+            ))}
+            {selectedId !== "quick" && !todayStudents.some(s => s.id === selectedId) && roster.find(s => s.id === selectedId) && (
+              <button onClick={() => setShowPick(true)} style={pill(true)}>{roster.find(s => s.id === selectedId).name}</button>
+            )}
+            <button onClick={() => setShowPick(true)} style={{
+              padding: "7px 14px", borderRadius: 999, border: "2px solid #4f46e5",
+              background: "#fff", color: "#4f46e5", fontWeight: 700, fontSize: 13,
+              cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0,
+            }}>▾ all {roster.length}</button>
+          </React.Fragment>
+        ) : roster.length <= 5 ? roster.map(s => (
           <button key={s.id} onClick={() => onSelect(s.id)} style={pill(selectedId === s.id)}>{s.name}</button>
         )) : (
           <React.Fragment>
@@ -1446,45 +1908,32 @@ function StudentBar({ roster, selectedId, onSelect, onAdd, onManage, onHistory, 
         <div onClick={() => setShowPick(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, maxWidth: 420, width: "92%", maxHeight: "80vh", overflowY: "auto", padding: 16, boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: "#1e293b", marginBottom: 10 }}>Choose student</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
               <button onClick={() => { onSelect("quick"); setShowPick(false); }} style={pill(selectedId === "quick")}>Quick session</button>
-              {roster.map(s => (
-                <button key={s.id} onClick={() => { onSelect(s.id); setShowPick(false); }} style={pill(selectedId === s.id)}>{s.name}</button>
-              ))}
             </div>
+            {(() => {
+              const gs = groupByBuilding(roster);
+              return [...gs.filter(g => g.building !== NO_BUILDING), ...gs.filter(g => g.building === NO_BUILDING)];
+            })().map(g => (
+              <div key={g.building} style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>{g.building}</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {g.students.map(s => (
+                    <button key={s.id} onClick={() => { onSelect(s.id); setShowPick(false); }} style={pill(selectedId === s.id)}>{s.name}</button>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
-      {selectedId !== "quick" && (
-        <button onClick={onHistory} title="Session history" style={{
-          padding: "7px 10px", borderRadius: 10, border: "2px solid #e2e8f0",
-          background: "#fff", color: "#64748b", fontSize: 14, cursor: "pointer", flexShrink: 0,
-          marginBottom: 4,
-        }}>🕘</button>
-      )}
-      <button onClick={onCompact} title="Compact view" style={{
-        padding: "7px 10px", borderRadius: 10,
-        border: `2px solid ${isCompact ? "#4f46e5" : "#e2e8f0"}`,
-        background: isCompact ? "#ede9fe" : "#fff",
-        color: isCompact ? "#4f46e5" : "#64748b",
-        fontSize: 14, cursor: "pointer", flexShrink: 0, marginBottom: 4,
-      }}>☰</button>
-      <button onClick={onBank} title="Goal bank" style={{
-        padding: "7px 10px", borderRadius: 10, border: "2px solid #e2e8f0",
-        background: "#fff", color: "#64748b", fontSize: 14, cursor: "pointer", flexShrink: 0,
-        marginBottom: 4,
-      }}>📚</button>
-      <button onClick={onManage} title="Manage roster" style={{
-        padding: "7px 10px", borderRadius: 10, border: "2px solid #e2e8f0",
-        background: "#fff", color: "#64748b", fontSize: 14, cursor: "pointer", flexShrink: 0,
-        marginBottom: 4,
-      }}>⚙</button>
     </div>
   );
 }
 
-function RosterPanel({ roster, onRename, onDelete, onMove, onShare, onImport, onClose, shareStatus }) {
+function RosterPanel({ roster, onRename, onDelete, onMove, onShare, onImport, onClose, shareStatus, onSetBuilding }) {
   const [importText, setImportText] = useState("");
+  const [placing, setPlacing] = useState(null);
   const [importMsg, setImportMsg] = useState(null);
   const [renaming, setRenaming] = useState(null);
   const [deleting, setDeleting] = useState(null);
@@ -1507,6 +1956,16 @@ function RosterPanel({ roster, onRename, onDelete, onMove, onShare, onImport, on
           initialValue={renaming.name}
           onSubmit={(name) => { onRename(renaming.id, name); setRenaming(null); }}
           onCancel={() => setRenaming(null)}
+        />
+      )}
+      {placing && (
+        <StudentInfoModal
+          title={`${placing.name}'s building`}
+          askName={false}
+          initialBuilding={placing.building || ""}
+          buildings={buildingNames(roster)}
+          onSubmit={(_, b) => { onSetBuilding(placing.id, b); setPlacing(null); }}
+          onCancel={() => setPlacing(null)}
         />
       )}
       {deleting && (
@@ -1537,7 +1996,15 @@ function RosterPanel({ roster, onRename, onDelete, onMove, onShare, onImport, on
           display: "flex", alignItems: "center", gap: 8, padding: "7px 0",
           borderBottom: "1px solid #f1f5f9",
         }}>
-          <span style={{ fontSize: 14, fontWeight: 600, color: "#1e293b", flex: 1 }}>{s.name}</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "#1e293b" }}>{s.name}</div>
+            <button onClick={() => setPlacing(s)} style={{
+              marginTop: 2, padding: "1px 8px", borderRadius: 999, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+              border: (s.building || "").trim() ? "1.5px solid #c7d2fe" : "1.5px dashed #fcd34d",
+              background: (s.building || "").trim() ? "#eef2ff" : "#fffbeb",
+              color: (s.building || "").trim() ? "#4f46e5" : "#b45309",
+            }}>📍 {(s.building || "").trim() || "set building"}</button>
+          </div>
           <span style={{ fontSize: 11, color: "#94a3b8" }}>{(s.goals || []).length} goal{(s.goals || []).length === 1 ? "" : "s"}</span>
           <button onClick={() => onMove(s.id, -1)} style={{
             padding: "4px 8px", borderRadius: 7, border: "1.5px solid #e2e8f0",
@@ -1619,9 +2086,9 @@ function loadStore() {
         const sessions = {};
         Object.keys(parsed.sessions).forEach(k => {
           const sess = parsed.sessions[k] || {};
-          sessions[k] = { goals: (sess.goals || []).map(normalizeGoalFields), reinforcers: sess.reinforcers || "", parentNote: sess.parentNote || "", startedAt: sess.startedAt || null };
+          sessions[k] = { goals: (sess.goals || []).map(normalizeGoalFields), reinforcers: sess.reinforcers || "", parentNote: sess.parentNote || "", startedAt: sess.startedAt || null, bcbaInclude: !!sess.bcbaInclude };
         });
-        return { roster, selectedId: parsed.selectedId || "quick", sessions };
+        return { roster, selectedId: parsed.selectedId || "quick", sessions, ...planFields(parsed) };
       }
     }
   } catch {}
@@ -1640,7 +2107,25 @@ function loadStore() {
     roster: [],
     selectedId: "quick",
     sessions: quick ? { quick } : { quick: defaultSession() },
+    ...planFields({}),
   };
+}
+
+// Planning data saved alongside the roster: materials library, weekly schedule,
+// and today-only changes. Anything missing or malformed falls back to empty.
+function planFields(parsed) {
+  const matLib = (Array.isArray(parsed.matLib) ? parsed.matLib : [])
+    .filter(m => m && typeof m.id === "string")
+    .map(m => ({ id: m.id, name: String(m.name || "Untitled set"), items: String(m.items || "") }));
+  const schedule = {};
+  WEEKDAYS.forEach(({ d }) => {
+    const ids = parsed.schedule && parsed.schedule[d];
+    schedule[d] = Array.isArray(ids) ? ids.filter(x => typeof x === "string") : [];
+  });
+  const o = parsed.dayOverride;
+  const dayOverride = (o && typeof o.date === "string" && Array.isArray(o.ids))
+    ? { date: o.date, ids: o.ids.filter(x => typeof x === "string") } : null;
+  return { matLib, schedule, dayOverride };
 }
 
 function App() {
@@ -1653,6 +2138,7 @@ function App() {
   const [showBank, setShowBank] = useState(false);
   const [compactView, setCompactView] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
+  const [showPlan, setShowPlan] = useState(false);
 
   const { roster, selectedId, sessions } = store;
   const session = sessions[selectedId] || defaultSession();
@@ -1709,6 +2195,39 @@ function App() {
     ...prev,
     roster: prev.roster.map(s => (s.id === prev.selectedId ? { ...s, notes: val } : s)),
   }));
+  const setStudentField = (id, field, val) => setStore(prev => ({
+    ...prev,
+    roster: prev.roster.map(s => (s.id === id ? { ...s, [field]: val } : s)),
+  }));
+  const setBcbaInclude = (val) => setStore(prev => {
+    const cur = prev.sessions[prev.selectedId] || defaultSession();
+    return { ...prev, sessions: { ...prev.sessions, [prev.selectedId]: { ...cur, bcbaInclude: val } } };
+  });
+
+  // ---- Schedule: usual weekday lists + today-only changes ----
+  const rosterIds = new Set(roster.map(s => s.id));
+  const weekday = new Date().getDay();
+  const tKey = todayKey();
+  const overrideActive = !!(store.dayOverride && store.dayOverride.date === tKey);
+  const usualToday = ((store.schedule || {})[weekday] || []).filter(id => rosterIds.has(id));
+  const todayIds = (overrideActive ? store.dayOverride.ids : usualToday).filter(id => rosterIds.has(id));
+  const todayStudents = todayIds.map(id => roster.find(s => s.id === id));
+  const setTodayIds = (fn) => setStore(prev => {
+    const ids = new Set(prev.roster.map(s => s.id));
+    const k = todayKey();
+    const base = (prev.dayOverride && prev.dayOverride.date === k)
+      ? prev.dayOverride.ids
+      : (((prev.schedule || {})[new Date().getDay()]) || []);
+    return { ...prev, dayOverride: { date: k, ids: fn(base.filter(id => ids.has(id))) } };
+  });
+  const resetToday = () => setStore(prev => ({ ...prev, dayOverride: null }));
+  const setDayIds = (d, fn) => setStore(prev => {
+    const schedule = { ...(prev.schedule || {}) };
+    schedule[d] = fn((schedule[d] || []).filter(id => prev.roster.some(s => s.id === id)));
+    return { ...prev, schedule };
+  });
+  const matLib = store.matLib || [];
+  const setLib = useCallback((fn) => setStore(prev => ({ ...prev, matLib: fn(prev.matLib || []) })), []);
 
   const selectStudent = (sid) => {
     setShowSummary(false);
@@ -1730,13 +2249,13 @@ function App() {
     });
   };
 
-  const addStudent = (name) => {
+  const addStudent = (name, building) => {
     const id = makeId("student");
     setAddingStudent(false);
     setShowSummary(false);
     setStore(prev => ({
       ...prev,
-      roster: [...prev.roster, { id, name, goals: [] }],
+      roster: [...prev.roster, { id, name, goals: [], building: building || "" }],
       selectedId: id,
       sessions: { ...prev.sessions, [id]: defaultSession() },
     }));
@@ -1753,11 +2272,16 @@ function App() {
     setStore(prev => {
       const sessions = { ...prev.sessions };
       delete sessions[id];
+      const schedule = {};
+      Object.keys(prev.schedule || {}).forEach(d => { schedule[d] = (prev.schedule[d] || []).filter(x => x !== id); });
+      const dayOverride = prev.dayOverride ? { ...prev.dayOverride, ids: prev.dayOverride.ids.filter(x => x !== id) } : null;
       return {
         ...prev,
         roster: prev.roster.filter(s => s.id !== id),
         selectedId: prev.selectedId === id ? "quick" : prev.selectedId,
         sessions,
+        schedule,
+        dayOverride,
       };
     });
   };
@@ -1804,7 +2328,9 @@ function App() {
   const shareRoster = async () => {
     const payload = JSON.stringify({
       slpRoster: 1,
-      students: roster.map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [] })),
+      students: roster.map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "" })),
+      matLib,
+      schedule: Object.fromEntries(WEEKDAYS.map(({ d }) => [d, ((store.schedule || {})[d] || []).map(id => (roster.find(s => s.id === id) || {}).name).filter(Boolean)])),
     });
     if (navigator.share) {
       try {
@@ -1844,6 +2370,8 @@ function App() {
         biteTarget: t.biteTarget,
         targetOf: t.targetOf,
         items: t.items,
+        matId: t.matId,
+        matTweak: t.matTweak,
       });
       const incoming = parsed.students.filter(s => s && typeof s.name === "string" && s.name.trim());
       let added = 0, merged = 0, newSessions = 0;
@@ -1852,8 +2380,9 @@ function App() {
         const inGoals = (Array.isArray(s.goals) ? s.goals : []).map(cleanGoal);
         const inHist = (Array.isArray(s.history) ? s.history : []).filter(h => h && typeof h.date === "string");
         const idx = newRoster.findIndex(r => r.name.trim().toLowerCase() === s.name.trim().toLowerCase());
+        const inBuilding = typeof s.building === "string" ? s.building.trim() : "";
         if (idx === -1) {
-          newRoster.push({ id: makeId("student"), name: s.name.trim(), goals: inGoals, history: inHist.slice(-40) });
+          newRoster.push({ id: makeId("student"), name: s.name.trim(), goals: inGoals, history: inHist.slice(-40), building: inBuilding });
           added++;
           newSessions += inHist.length;
           return;
@@ -1885,19 +2414,38 @@ function App() {
         const history = [...(local.history || []), ...extra]
           .sort((a, b) => new Date(a.date) - new Date(b.date))
           .slice(-40);
-        newRoster[idx] = { ...local, goals: localGoals, history };
-        if (extra.length > 0 || localGoals.length > beforeLen || updatedTpl) merged++;
+        const building = (local.building || "").trim() ? local.building : inBuilding;
+        newRoster[idx] = { ...local, goals: localGoals, history, building };
+        if (extra.length > 0 || localGoals.length > beforeLen || updatedTpl || building !== (local.building || "")) merged++;
         newSessions += extra.length;
       });
-      if (added === 0 && merged === 0) {
+      // Materials sets: add any this device doesn't have yet.
+      const inLib = (Array.isArray(parsed.matLib) ? parsed.matLib : []).filter(m => m && typeof m.id === "string");
+      const newLib = [...matLib];
+      inLib.forEach(m => { if (!newLib.some(x => x.id === m.id)) newLib.push({ id: m.id, name: String(m.name || "Untitled set"), items: String(m.items || "") }); });
+      // Weekly schedule: fill in only the days that are empty on this device.
+      const newSchedule = { ...(store.schedule || {}) };
+      let schedFilled = 0;
+      if (parsed.schedule && typeof parsed.schedule === "object") {
+        WEEKDAYS.forEach(({ d }) => {
+          const names = Array.isArray(parsed.schedule[d]) ? parsed.schedule[d] : [];
+          if ((newSchedule[d] || []).length > 0 || names.length === 0) return;
+          const ids = names.map(n => (newRoster.find(r => r.name.trim().toLowerCase() === String(n).trim().toLowerCase()) || {}).id).filter(Boolean);
+          if (ids.length) { newSchedule[d] = ids; schedFilled++; }
+        });
+      }
+      const libAdded = newLib.length - matLib.length;
+      if (added === 0 && merged === 0 && libAdded === 0 && schedFilled === 0) {
         return { ok: false, text: "Nothing new in that code (already in sync?)" };
       }
-      setStore(prev => ({ ...prev, roster: newRoster }));
+      setStore(prev => ({ ...prev, roster: newRoster, matLib: newLib, schedule: newSchedule }));
       return { ok: true, text: `✓ ${added} added, ${merged} merged, ${newSessions} session${newSessions === 1 ? "" : "s"} synced` };
     } catch {
       return { ok: false, text: "That doesn't look like a roster code — paste the whole thing" };
     }
   };
+
+  const bcbaCopy = (selectedStudent && session.bcbaInclude && (selectedStudent.bcba || "").trim()) || "";
 
   const buildSummaryHTML = () => {
     const now = new Date();
@@ -1973,6 +2521,9 @@ function App() {
     }
     if (parentNote.trim()) {
       html += `<p><strong>Parent note:</strong> ${parentNote.trim()}</p>`;
+    }
+    if (bcbaCopy) {
+      html += `<p><strong>BCBA collaboration:</strong> ${bcbaCopy}</p>`;
     }
     return html;
   };
@@ -2050,6 +2601,7 @@ function App() {
     });
     if (reinforcers.trim()) lines.push(`Reinforcers/Activities/Other: ${reinforcers.trim()}`);
     if (parentNote.trim()) lines.push(`Parent note: ${parentNote.trim()}`);
+    if (bcbaCopy) lines.push(`BCBA collaboration: ${bcbaCopy}`);
     return lines.join("\n").trim();
   };
 
@@ -2133,6 +2685,7 @@ function App() {
   };
 
   return (
+    <MatContext.Provider value={{ lib: matLib, setLib }}>
     <div style={{
       maxWidth: 480, margin: "0 auto", minHeight: "100vh",
       background: "#f8fafc",
@@ -2148,28 +2701,59 @@ function App() {
       )}
 
       {addingStudent && (
-        <PromptModal
+        <StudentInfoModal
           title="Add Student"
-          placeholder="Student name or initials..."
+          askName
+          buildings={buildingNames(roster)}
           onSubmit={addStudent}
           onCancel={() => setAddingStudent(false)}
         />
       )}
 
+      {showPlan && (
+        <PlanPanel
+          roster={roster}
+          todayIds={todayIds}
+          overrideActive={overrideActive}
+          setTodayIds={setTodayIds}
+          resetToday={resetToday}
+          schedule={store.schedule || {}}
+          setDayIds={setDayIds}
+          matLib={matLib}
+          setLib={setLib}
+          onOpenStudent={(id) => { selectStudent(id); setShowPlan(false); }}
+          onClose={() => setShowPlan(false)}
+        />
+      )}
+
       <div style={{
         background: "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)",
-        padding: "20px 20px 16px", color: "#fff",
+        padding: "14px 16px 14px", color: "#fff",
       }}>
-        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, opacity: 0.75, textTransform: "uppercase", marginBottom: 2 }}>
-          Session Tracker
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, opacity: 0.75, textTransform: "uppercase", flex: 1 }}>
+            Session Tracker
+          </div>
+          {selectedId !== "quick" && <button onClick={openHistory} title="Session history" style={headerIcon(false)}>🕘</button>}
+          <button onClick={() => { setCompactView(v => !v); setExpandedId(null); }} title="Compact view" style={headerIcon(compactView)}>☰</button>
+          <button onClick={() => setShowBank(true)} title="Goal bank" style={headerIcon(false)}>📚</button>
+          <button onClick={() => setShowRoster(v => !v)} title="Manage roster" style={headerIcon(showRoster)}>⚙</button>
         </div>
-        <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.5 }}>
-          {selectedStudent ? selectedStudent.name : "SLP Data Collection"}
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.5, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {selectedStudent ? selectedStudent.name : "SLP Data Collection"}
+          </div>
+          <button onClick={() => setShowPlan(true)} title="Plan" style={{
+            background: "rgba(255,255,255,0.2)", border: "1.5px solid rgba(255,255,255,0.35)", color: "#fff",
+            borderRadius: 10, padding: "7px 12px", fontWeight: 700, fontSize: 13, cursor: "pointer",
+            fontFamily: "inherit", flexShrink: 0,
+          }}>📅 Plan</button>
         </div>
       </div>
 
       <StudentBar
         roster={roster}
+        todayStudents={todayStudents}
         selectedId={selectedId}
         onSelect={selectStudent}
         onAdd={() => setAddingStudent(true)}
@@ -2190,10 +2774,29 @@ function App() {
           onImport={importRoster}
           onClose={() => setShowRoster(false)}
           shareStatus={shareStatus}
+          onSetBuilding={(id, b) => setStudentField(id, "building", b)}
         />
       )}
 
       <div style={{ padding: "12px 16px 0" }}>
+        {selectedStudent && (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ ...sectionLabel, marginBottom: 6, display: "flex", gap: 6 }}>
+              <span>📝 Session plan — stays until you change it</span>
+            </div>
+            <textarea
+              value={selectedStudent.notes || ""}
+              onChange={e => setStudentNotes(e.target.value)}
+              placeholder="e.g., start with farm game, end with bubbles..."
+              rows={2}
+              style={{
+                width: "100%", borderRadius: 10, border: "1.5px dashed #c7d2fe",
+                padding: "10px 12px", fontFamily: "inherit", fontSize: 13, color: "#334155",
+                resize: "vertical", outline: "none", background: "#fbfaff", boxSizing: "border-box",
+              }}
+            />
+          </div>
+        )}
         {goals.filter(g => !g.skipped).map((g, i) => (
           compactView && g.id !== expandedId ? (
             <CompactLine key={g.id} goal={g} index={i} at={goalAtCriteria(g, studentHistory)} onTap={() => setExpandedId(g.id)} onUpdate={updateGoal} />
@@ -2277,18 +2880,33 @@ function App() {
 
         {selectedStudent && (
           <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
-              Notes &amp; links — stays until you clear it
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <span style={{ ...sectionLabel, flex: 1 }}>🤝 BCBA collab — stays until you change it</span>
+              <button onClick={() => setBcbaInclude(!session.bcbaInclude)} style={{
+                display: "flex", alignItems: "center", gap: 6, background: "none", border: "none",
+                cursor: "pointer", fontFamily: "inherit", padding: 0,
+              }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: session.bcbaInclude ? "#16a34a" : "#94a3b8" }}>Include in note</span>
+                <span style={{
+                  width: 34, height: 20, borderRadius: 999, background: session.bcbaInclude ? "#22c55e" : "#cbd5e1",
+                  position: "relative", transition: "background 0.2s", flexShrink: 0,
+                }}>
+                  <span style={{
+                    position: "absolute", top: 2, left: session.bcbaInclude ? 16 : 2, width: 16, height: 16,
+                    borderRadius: "50%", background: "#fff", transition: "left 0.2s",
+                  }} />
+                </span>
+              </button>
             </div>
             <textarea
-              value={selectedStudent.notes || ""}
-              onChange={e => setStudentNotes(e.target.value)}
-              placeholder="Materials, links, reminders for next time..."
+              value={selectedStudent.bcba || ""}
+              onChange={e => setStudentField(selectedStudent.id, "bcba", e.target.value)}
+              placeholder="Notes to share or check in about with the BCBA..."
               rows={2}
               style={{
-                width: "100%", borderRadius: 10, border: "1.5px dashed #c7d2fe",
+                width: "100%", borderRadius: 10, border: "1.5px dashed #a7f3d0",
                 padding: "10px 12px", fontFamily: "inherit", fontSize: 13, color: "#334155",
-                resize: "vertical", outline: "none", background: "#fbfaff", boxSizing: "border-box",
+                resize: "vertical", outline: "none", background: "#f7fefb", boxSizing: "border-box",
               }}
             />
           </div>
@@ -2317,6 +2935,11 @@ function App() {
           {parentNote.trim() && (
             <div style={{ borderTop: "1px solid #334155", paddingTop: 12, marginTop: 8, fontSize: 13, color: "#94a3b8" }}>
               <span style={{ fontWeight: 700, color: "#cbd5e1" }}>Parent note:</span> {parentNote.trim()}
+            </div>
+          )}
+          {bcbaCopy && (
+            <div style={{ borderTop: "1px solid #334155", paddingTop: 12, marginTop: 8, fontSize: 13, color: "#94a3b8" }}>
+              <span style={{ fontWeight: 700, color: "#cbd5e1" }}>BCBA collaboration:</span> {bcbaCopy}
             </div>
           )}
           <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
@@ -2349,6 +2972,7 @@ function App() {
         }}>{showSummary ? "Hide Summary" : "End Session →"}</button>
       </div>
     </div>
+    </MatContext.Provider>
   );
 }
 
