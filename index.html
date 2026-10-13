@@ -758,7 +758,7 @@ function DayGroups({ ids, roster, onMoveGroup, renderStudent }) {
   ));
 }
 
-function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, schedule, setDayIds, matLib, setLib, onOpenStudent, onClose, sessions, onToggleAbsent }) {
+function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, schedule, setDayIds, matLib, setLib, onOpenStudent, onClose, sessions, onToggleAbsent, doneIds, onUndoDone }) {
   const [tab, setTab] = useState("today");
   const wd = new Date().getDay();
   const [day, setDay] = useState(wd >= 1 && wd <= 5 ? wd : 1);
@@ -869,8 +869,19 @@ function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, 
                   </>
                 ) : usualHas ? <span>Your usual list for today</span> : <span>No usual list for today — set one up in the Week tab.</span>}
               </div>
-              <DayGroups ids={todayIds} roster={roster} renderStudent={renderToday}
+              <DayGroups ids={todayIds.filter(id => !doneIds.includes(id))} roster={roster} renderStudent={renderToday}
                 onMoveGroup={(b, dir) => setTodayIds(ids => moveGroupInList(ids, b, dir, roster))} />
+              {doneIds.length > 0 && (
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ ...sectionLabel, marginBottom: 6 }}>✓ Done today</div>
+                  {doneIds.map(id => roster.find(s => s.id === id)).filter(Boolean).map(s => (
+                    <div key={s.id} style={{ ...card, background: "#f1f5f9", display: "flex", alignItems: "center", gap: 6, padding: "8px 12px" }}>
+                      <button onClick={() => onOpenStudent(s.id)} style={{ background: "none", border: "none", padding: 0, fontSize: 14, fontWeight: 700, color: "#94a3b8", cursor: "pointer", fontFamily: "inherit", flex: 1, textAlign: "left" }}>✓ {s.name} ›</button>
+                      <button onClick={() => onUndoDone(s.id)} style={smallBtn}>↩ Not done</button>
+                    </div>
+                  ))}
+                </div>
+              )}
               <button onClick={() => setPicker({ mode: "add" })} style={{
                 width: "100%", padding: "11px", borderRadius: 12, border: "2px dashed #c7d2fe", background: "#eef2ff",
                 color: "#4f46e5", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit",
@@ -1868,7 +1879,7 @@ function BankModal({ onPick, onClose, targetName }) {
   );
 }
 
-function StudentBar({ roster, todayStudents, selectedId, onSelect, onAdd, onManage, onHistory, onBank, onCompact, isCompact, onPlan }) {
+function StudentBar({ roster, todayStudents, doneStudents, selectedId, onSelect, onAdd, onManage, onHistory, onBank, onCompact, isCompact, onPlan }) {
   const [showPick, setShowPick] = useState(false);
   const pill = (active) => ({
     padding: "7px 14px", borderRadius: 999, border: "2px solid",
@@ -1886,7 +1897,7 @@ function StudentBar({ roster, todayStudents, selectedId, onSelect, onAdd, onMana
         scrollbarWidth: "none",
       }}>
         <button onClick={() => onSelect("quick")} style={pill(selectedId === "quick")}>Quick</button>
-        {todayStudents.length > 0 ? (
+        {todayStudents.length + doneStudents.length > 0 ? (
           <React.Fragment>
             {groupByBuilding(todayStudents).map(g => (
               <React.Fragment key={g.building}>
@@ -1896,7 +1907,16 @@ function StudentBar({ roster, todayStudents, selectedId, onSelect, onAdd, onMana
                 ))}
               </React.Fragment>
             ))}
-            {selectedId !== "quick" && !todayStudents.some(s => s.id === selectedId) && roster.find(s => s.id === selectedId) && (
+            {doneStudents.length > 0 && (
+              <span style={{ fontSize: 9, fontWeight: 800, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.5, alignSelf: "center", whiteSpace: "nowrap", flexShrink: 0, marginLeft: 4 }}>Done</span>
+            )}
+            {doneStudents.map(s => (
+              <button key={s.id} onClick={() => onSelect(s.id)} style={{
+                ...pill(selectedId === s.id),
+                ...(selectedId === s.id ? { background: "#94a3b8", borderColor: "#94a3b8" } : { background: "#f1f5f9", color: "#94a3b8", borderColor: "#e2e8f0" }),
+              }}>✓ {s.name}</button>
+            ))}
+            {selectedId !== "quick" && !todayStudents.some(s => s.id === selectedId) && !doneStudents.some(s => s.id === selectedId) && roster.find(s => s.id === selectedId) && (
               <button onClick={() => setShowPick(true)} style={pill(true)}>{roster.find(s => s.id === selectedId).name}</button>
             )}
             <button onClick={() => setShowPick(true)} style={{
@@ -2146,7 +2166,10 @@ function planFields(parsed) {
   const o = parsed.dayOverride;
   const dayOverride = (o && typeof o.date === "string" && Array.isArray(o.ids))
     ? { date: o.date, ids: o.ids.filter(x => typeof x === "string") } : null;
-  return { matLib, schedule, dayOverride };
+  const dd = parsed.dayDone;
+  const dayDone = (dd && typeof dd.date === "string" && Array.isArray(dd.ids))
+    ? { date: dd.date, ids: dd.ids.filter(x => typeof x === "string") } : null;
+  return { matLib, schedule, dayOverride, dayDone };
 }
 
 function App() {
@@ -2273,7 +2296,13 @@ function App() {
   const overrideActive = !!(store.dayOverride && store.dayOverride.date === tKey);
   const usualToday = ((store.schedule || {})[weekday] || []).filter(id => rosterIds.has(id));
   const todayIds = (overrideActive ? store.dayOverride.ids : usualToday).filter(id => rosterIds.has(id));
-  const todayStudents = todayIds.map(id => roster.find(s => s.id === id));
+  const doneIds = (store.dayDone && store.dayDone.date === tKey ? store.dayDone.ids : []).filter(id => rosterIds.has(id));
+  const todayStudents = todayIds.filter(id => !doneIds.includes(id)).map(id => roster.find(s => s.id === id));
+  const doneStudents = doneIds.map(id => roster.find(s => s.id === id));
+  const undoDone = (id) => setStore(prev => ({
+    ...prev,
+    dayDone: prev.dayDone && prev.dayDone.date === todayKey() ? { ...prev.dayDone, ids: prev.dayDone.ids.filter(x => x !== id) } : prev.dayDone,
+  }));
   const setTodayIds = (fn) => setStore(prev => {
     const ids = new Set(prev.roster.map(s => s.id));
     const k = todayKey();
@@ -2714,6 +2743,7 @@ function App() {
   const handleNewSession = () => {
     setShowSummary(false);
     setMakeupOpen(false);
+    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
     setStore(prev => {
       const cur = prev.sessions[prev.selectedId] || defaultSession();
       let roster = prev.roster;
@@ -2762,7 +2792,13 @@ function App() {
         ? [newGoal(), newGoal()]
         : cur.goals.map(goalFromTemplate);
       const sessions = { ...prev.sessions, [prev.selectedId]: { goals, reinforcers: "", parentNote: "", startedAt: null } };
-      return { ...prev, roster, sessions };
+      let dayDone = prev.dayDone;
+      if (prev.selectedId !== "quick") {
+        const k = todayKey();
+        const ids = dayDone && dayDone.date === k ? dayDone.ids : [];
+        dayDone = { date: k, ids: ids.includes(prev.selectedId) ? ids : [...ids, prev.selectedId] };
+      }
+      return { ...prev, roster, sessions, dayDone };
     });
   };
 
@@ -2806,6 +2842,8 @@ function App() {
           onOpenStudent={(id) => { selectStudent(id); setShowPlan(false); }}
           sessions={sessions}
           onToggleAbsent={toggleAbsent}
+          doneIds={doneIds}
+          onUndoDone={undoDone}
           onClose={() => setShowPlan(false)}
         />
       )}
@@ -2838,6 +2876,7 @@ function App() {
       <StudentBar
         roster={roster}
         todayStudents={todayStudents}
+        doneStudents={doneStudents}
         selectedId={selectedId}
         onSelect={selectStudent}
         onAdd={() => setAddingStudent(true)}
