@@ -61,6 +61,40 @@ const BITE_KINDS = [
   { k: "h", label: "With help", word: "with help", bg: "#3b82f6", sh: "#1d4ed8" },
 ];
 
+// ---- Goal statuses ----
+// "" = active (official), "screening" = trying out, "new" = becomes official at month-end,
+// "ending" = achieved / stepped / discontinued / not used, leaves at month-end review.
+const isEnding = g => g && g.status === "ending";
+const OUTCOME_LABEL = { achieved: "Achieved", stepped: "Stepped up/down", discontinued: "Discontinued", notUsed: "Screened, not used", archived: "Archived" };
+function goalText(g) { return ((g.fullGoal || "").trim() || (g.label || "").trim() || "Untitled goal"); }
+function monthLabelFor(date) { return date.toLocaleDateString("en-US", { month: "long", year: "numeric" }); }
+function reviewMonth() {
+  const d = new Date();
+  if (d.getDate() >= 20) return new Date(d.getFullYear(), d.getMonth() + 1, 1);
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+// New month goal list, in the style of the student Docs.
+function monthGoalList(student, monthDate) {
+  const items = [];
+  (student.goals || []).forEach(t => {
+    const txt = goalText(t);
+    if (t.status === "screening") return;
+    if (isEnding(t)) {
+      if (t.outcome === "achieved") items.push({ text: txt, tag: "Achieved" });
+      else if (t.outcome === "stepped") items.push({ text: txt, tag: "Updated (see NEW)" });
+      else if (t.outcome === "discontinued") items.push({ text: txt, tag: `discontinue${(t.reason || "").trim() ? ` - ${t.reason.trim()}` : ""}` });
+      return;
+    }
+    if (t.status === "new") items.push({ text: txt, isNew: true });
+    else items.push({ text: txt });
+  });
+  const title = monthLabelFor(monthDate);
+  const plain = [title, ...items.map((it, i) => `${i + 1}. ${it.isNew ? "NEW: " : ""}${it.text}${it.tag ? ` ${it.tag}` : ""}`)].join("\n");
+  const esc = (x) => String(x).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const html = `<h2>${esc(title)}</h2><ol>${items.map(it => `<li>${it.isNew ? `<strong>NEW: ${esc(it.text)}</strong>` : esc(it.text)}${it.tag ? ` <strong>${esc(it.tag)}</strong>` : ""}</li>`).join("")}</ol>`;
+  return { plain, html, count: items.length };
+}
+
 // Bites are stored per food as a list of codes: f/p/h for a bite, "|" for a break.
 function biteRunsOf(it) {
   const runs = [];
@@ -430,6 +464,8 @@ function goalFromTemplate(t) {
     biteTarget: typeof t.biteTarget === "number" ? t.biteTarget : 0,
     items: (t.items || []).map(it => ({ name: typeof it === "string" ? it : String((it && it.name) || ""), correct: 0, incorrect: 0, att: false, bites: [] })),
     oneTry: !!t.oneTry,
+    status: ["screening", "new", "ending"].includes(t.status) ? t.status : "",
+    outcome: t.outcome || "", reason: t.reason || "", changedAt: t.changedAt || "", replacesTid: t.replacesTid || "", prevStatus: t.prevStatus || "",
     activeItem: 0,
     matId: typeof t.matId === "string" ? t.matId : "",
     matTweak: typeof t.matTweak === "string" ? t.matTweak : "",
@@ -452,6 +488,7 @@ function templatesFromGoals(goals) {
     biteTarget: typeof g.biteTarget === "number" ? g.biteTarget : 0,
     items: (g.items || []).map(it => ({ name: it.name })),
     oneTry: !!g.oneTry,
+    status: g.status || "", outcome: g.outcome || "", reason: g.reason || "", changedAt: g.changedAt || "", replacesTid: g.replacesTid || "", prevStatus: g.prevStatus || "",
     matId: g.matId || "",
     matTweak: g.matTweak || "",
   }));
@@ -922,7 +959,76 @@ function DayGroups({ ids, roster, onMoveGroup, renderStudent }) {
   ));
 }
 
-function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, schedule, setDayIds, matLib, setLib, onOpenStudent, onClose, sessions, onToggleAbsent, doneIds, onUndoDone, onClinicianAbsent }) {
+// Month-end review: one student's pending goal changes, apply them, copy the new month list, archive.
+function GoalReview({ student, onApply, onRestore, onDeleteArchived, monthDate }) {
+  const [copied, setCopied] = useState(false);
+  const [showArch, setShowArch] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const goals = student.goals || [];
+  const ending = goals.filter(isEnding);
+  const fresh = goals.filter(g => g.status === "new");
+  const screening = goals.filter(g => g.status === "screening");
+  const pending = ending.length + fresh.length;
+  const list = monthGoalList(student, monthDate);
+  const arch = student.archived || [];
+  const copy = async () => {
+    try {
+      if (window.ClipboardItem) await navigator.clipboard.write([new ClipboardItem({ "text/html": new Blob([list.html], { type: "text/html" }), "text/plain": new Blob([list.plain], { type: "text/plain" }) })]);
+      else await navigator.clipboard.writeText(list.plain);
+    } catch { try { await navigator.clipboard.writeText(list.plain); } catch {} }
+    setCopied(true); setTimeout(() => setCopied(false), 2000);
+  };
+  const row = (g, tag, color) => (
+    <div key={g.tid} style={{ fontSize: 13, color: "#334155", padding: "3px 0", lineHeight: 1.4 }}>
+      <strong style={{ color }}>{tag}</strong> — {g.label || "Untitled goal"}{g.reason ? ` (${g.reason})` : ""}
+    </div>
+  );
+  return (
+    <div style={{ background: "#fff", border: "1.5px solid #e2e8f0", borderRadius: 12, padding: "10px 12px", marginBottom: 10 }}>
+      {confirmDel !== null && (
+        <ConfirmModal message="Delete this archived goal and its info for good? This can't be undone." confirmLabel="Delete"
+          onConfirm={() => { onDeleteArchived(student.id, confirmDel); setConfirmDel(null); }} onCancel={() => setConfirmDel(null)} />
+      )}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+        <span style={{ fontSize: 15, fontWeight: 800, color: "#1e293b", flex: 1 }}>{student.name}</span>
+        {pending > 0
+          ? <span style={{ fontSize: 11, fontWeight: 700, color: "#b45309", background: "#fef3c7", borderRadius: 999, padding: "2px 8px" }}>{pending} change{pending === 1 ? "" : "s"}</span>
+          : <span style={{ fontSize: 11, color: "#94a3b8" }}>no changes</span>}
+      </div>
+      {ending.filter(g => g.outcome !== "notUsed" && g.outcome !== "archived").map(g => row(g, OUTCOME_LABEL[g.outcome], g.outcome === "achieved" ? "#15803d" : g.outcome === "discontinued" ? "#b45309" : "#0369a1"))}
+      {ending.filter(g => g.outcome === "notUsed" || g.outcome === "archived").map(g => row(g, OUTCOME_LABEL[g.outcome], "#64748b"))}
+      {fresh.map(g => row(g, "NEW", "#15803d"))}
+      {screening.length > 0 && (
+        <div style={{ fontSize: 12, color: "#b45309", marginTop: 4 }}>Still screening (stays as is): {screening.map(g => g.label || "Untitled").join(", ")}</div>
+      )}
+      <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+        <button onClick={copy} style={{ flex: 1, padding: "8px", borderRadius: 9, border: "1.5px solid #c7d2fe", background: copied ? "#dcfce7" : "#eef2ff", color: copied ? "#15803d" : "#4f46e5", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{copied ? "✓ Copied" : `Copy ${monthLabelFor(monthDate)} goal list`}</button>
+        {pending > 0 && (
+          <button onClick={() => onApply(student.id)} style={{ flex: 1, padding: "8px", borderRadius: 9, border: "none", background: "#4f46e5", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Apply changes</button>
+        )}
+      </div>
+      {arch.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <button onClick={() => setShowArch(v => !v)} style={{ background: "none", border: "none", padding: 0, color: "#64748b", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{showArch ? "▾" : "▸"} Archived goals ({arch.length})</button>
+          {showArch && arch.slice().reverse().map((a, ri) => {
+            const i = arch.length - 1 - ri;
+            return (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 0", borderBottom: "1px solid #f1f5f9" }}>
+                <span style={{ flex: 1, fontSize: 12, color: "#475569", lineHeight: 1.4 }}>
+                  <strong>{OUTCOME_LABEL[a.outcome] || "Archived"}</strong>{a.changedAt ? ` ${shortDate(a.changedAt)}` : ""} — {a.label || "Untitled"}{a.reason ? ` (${a.reason})` : ""}
+                </span>
+                <button onClick={() => onRestore(student.id, i)} style={{ ...smallBtn, fontSize: 11 }}>Bring back</button>
+                <button onClick={() => setConfirmDel(i)} style={{ ...smallBtn, fontSize: 11, color: "#ef4444", borderColor: "#fecaca", background: "#fff5f5" }}>✕</button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, schedule, setDayIds, matLib, setLib, onOpenStudent, onClose, sessions, onToggleAbsent, doneIds, onUndoDone, onClinicianAbsent, onApplyGoals, onRestoreGoal, onDeleteArchived }) {
   const [tab, setTab] = useState("today");
   const wd = new Date().getDay();
   const [day, setDay] = useState(wd >= 1 && wd <= 5 ? wd : 1);
@@ -1024,7 +1130,7 @@ function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, 
             <button onClick={onClose} style={{ background: "rgba(255,255,255,0.2)", border: "none", color: "#fff", borderRadius: 9, padding: "6px 12px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Done</button>
           </div>
           <div style={{ display: "flex", gap: 4, background: "rgba(0,0,0,0.15)", borderRadius: 11, padding: 3 }}>
-            {tabBtn("today", "Today")}{tabBtn("week", "Week")}{tabBtn("materials", "Materials")}
+            {tabBtn("today", "Today")}{tabBtn("week", "Week")}{tabBtn("materials", "Materials")}{tabBtn("goals", "Goals")}
           </div>
         </div>
 
@@ -1091,6 +1197,24 @@ function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, 
               }}>+ Choose students</button>
             </>
           )}
+
+          {tab === "goals" && (() => {
+            const md = reviewMonth();
+            const withChanges = roster.filter(s => (s.goals || []).some(g => isEnding(g) || g.status === "new"));
+            const others = roster.filter(s => !withChanges.includes(s));
+            return (
+              <>
+                <div style={{ fontSize: 16, fontWeight: 800, color: "#1e293b" }}>Month-end review</div>
+                <div style={{ fontSize: 12, color: "#64748b", marginBottom: 12 }}>
+                  Goal changes you made this month. "Copy" gives you the {monthLabelFor(md)} goal list for the Doc; "Apply" archives finished goals and makes NEW goals official.
+                </div>
+                {roster.length === 0 && <div style={{ fontSize: 13, color: "#94a3b8" }}>No students yet.</div>}
+                {withChanges.map(s => <GoalReview key={s.id} student={s} monthDate={md} onApply={onApplyGoals} onRestore={onRestoreGoal} onDeleteArchived={onDeleteArchived} />)}
+                {others.length > 0 && <div style={{ ...sectionLabel, margin: "14px 0 6px" }}>No changes this month</div>}
+                {others.map(s => <GoalReview key={s.id} student={s} monthDate={md} onApply={onApplyGoals} onRestore={onRestoreGoal} onDeleteArchived={onDeleteArchived} />)}
+              </>
+            );
+          })()}
 
           {tab === "materials" && (
             <>
@@ -1316,7 +1440,36 @@ function OneTryPanel({ goal, onUpdate, rawHistory }) {
   );
 }
 
-function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, atCriteria, rawHistory }) {
+// Small form modal: one or two text fields, empty allowed when optional.
+function TextModal({ title, fields, confirmLabel, confirmColor, onSubmit, onCancel }) {
+  const [vals, setVals] = useState(fields.map(f => f.initial || ""));
+  const ok = fields.every((f, i) => f.optional || vals[i].trim());
+  return (
+    <div style={overlay}>
+      <div style={{ ...modalBox, maxWidth: 360 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: "#1e293b", marginBottom: 12 }}>{title}</div>
+        {fields.map((f, i) => (
+          <div key={i} style={{ marginBottom: 10 }}>
+            {f.label && <div style={{ ...sectionLabel, marginBottom: 4 }}>{f.label}</div>}
+            {f.multiline ? (
+              <textarea value={vals[i]} onChange={e => { const v = [...vals]; v[i] = e.target.value; setVals(v); }} placeholder={f.placeholder} rows={4}
+                style={{ width: "100%", borderRadius: 9, border: "1.5px solid #e2e8f0", padding: "9px 11px", fontSize: 14, fontFamily: "inherit", outline: "none", color: "#1e293b", boxSizing: "border-box", resize: "vertical" }} />
+            ) : (
+              <input autoFocus={i === 0} value={vals[i]} onChange={e => { const v = [...vals]; v[i] = e.target.value; setVals(v); }} placeholder={f.placeholder}
+                style={{ width: "100%", borderRadius: 9, border: "1.5px solid #e2e8f0", padding: "10px 12px", fontSize: 15, fontFamily: "inherit", outline: "none", color: "#1e293b", boxSizing: "border-box" }} />
+            )}
+          </div>
+        ))}
+        <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+          <button onClick={onCancel} style={{ flex: 1, padding: "10px", borderRadius: 9, border: "1.5px solid #e2e8f0", background: "#f8fafc", color: "#64748b", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+          <button onClick={() => { if (ok) onSubmit(vals); }} style={{ flex: 1, padding: "10px", borderRadius: 9, border: "none", background: confirmColor || "#4f46e5", opacity: ok ? 1 : 0.5, color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>{confirmLabel || "Save"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GoalCard({ goal, onUpdate, onRemove, onSkip, onChange, canSkip, index, history, atCriteria, rawHistory }) {
   const intervalRef = useRef(null);
   const [confirm, setConfirm] = useState(null);
   const [timerOpen, setTimerOpen] = useState(false);
@@ -1461,23 +1614,33 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
             boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
           }}>
             <div style={{ fontSize: 15, fontWeight: 600, color: "#1e293b", marginBottom: 16, lineHeight: 1.5 }}>
-              Remove "{goal.label || `Goal ${index + 1}`}"?
+              {goal.label || `Goal ${index + 1}`}
             </div>
-            <button onClick={() => { onSkip(goal.id); setConfirm(null); }} style={{
-              width: "100%", padding: "11px", borderRadius: 9, border: "none",
-              background: "#4f46e5", color: "#fff", fontWeight: 700, fontSize: 14,
-              cursor: "pointer", fontFamily: "inherit", marginBottom: 8,
-            }}>Skip today — back next session</button>
-            <button onClick={() => { update({ done: true }); setConfirm(null); }} style={{
-              width: "100%", padding: "11px", borderRadius: 9, border: "none",
-              background: "#64748b", color: "#fff", fontWeight: 700, fontSize: 14,
-              cursor: "pointer", fontFamily: "inherit", marginBottom: 8,
-            }}>Done for today — keep data</button>
-            <button onClick={() => { onRemove(goal.id); setConfirm(null); }} style={{
-              width: "100%", padding: "11px", borderRadius: 9, border: "none",
-              background: "#ef4444", color: "#fff", fontWeight: 700, fontSize: 14,
-              cursor: "pointer", fontFamily: "inherit", marginBottom: 8,
-            }}>Remove for good</button>
+            {(() => {
+              const b = (bg, color) => ({ width: "100%", padding: "11px", borderRadius: 9, border: "none", background: bg, color: color || "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit", marginBottom: 8 });
+              const go = (kind, extra) => { onChange(goal.id, kind, extra); setConfirm(null); };
+              return (
+                <>
+                  <div style={{ ...sectionLabel, textAlign: "left", margin: "0 0 6px" }}>Today</div>
+                  <button onClick={() => { onSkip(goal.id); setConfirm(null); }} style={b("#4f46e5")}>Skip today — back next session</button>
+                  <button onClick={() => { update({ done: true }); setConfirm(null); }} style={b("#64748b")}>Done for today — keep data</button>
+                  <div style={{ ...sectionLabel, textAlign: "left", margin: "8px 0 6px" }}>Change goal (applies at month-end)</div>
+                  {goal.status === "screening" ? (
+                    <>
+                      <button onClick={() => go("use")} style={b("#16a34a")}>✓ Use it — make it a goal</button>
+                      <button onClick={() => go("notUsed")} style={b("#f1f5f9", "#475569")}>Don't use it — archive</button>
+                    </>
+                  ) : (
+                    <>
+                      <button onClick={() => go("achieved")} style={b("#16a34a")}>✓ Achieved</button>
+                      <button onClick={() => setConfirm("step")} style={b("#0ea5e9")}>↕ Step up / down (new goal)</button>
+                      <button onClick={() => setConfirm("discontinue")} style={b("#f59e0b")}>Discontinue</button>
+                      <button onClick={() => go("archive")} style={b("#f1f5f9", "#475569")}>Archive (no change note)</button>
+                    </>
+                  )}
+                </>
+              );
+            })()}
             <button onClick={() => setConfirm(null)} style={{
               width: "100%", padding: "10px", borderRadius: 9,
               border: "1.5px solid #e2e8f0", background: "#f8fafc",
@@ -1485,6 +1648,28 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
             }}>Cancel</button>
           </div>
         </div>
+      )}
+      {confirm === "step" && (
+        <TextModal
+          title="Step up / down — new goal"
+          confirmLabel="Save new goal"
+          fields={[
+            { label: "Short name", initial: goal.label || "", placeholder: "New goal name..." },
+            { label: "Full goal (optional)", initial: goal.fullGoal || "", placeholder: "Will ... with ... in 8/10 opportunities.", multiline: true, optional: true },
+          ]}
+          onSubmit={([label, fullGoal]) => { onChange(goal.id, "stepped", { label, fullGoal }); setConfirm(null); }}
+          onCancel={() => setConfirm(null)}
+        />
+      )}
+      {confirm === "discontinue" && (
+        <TextModal
+          title={`Discontinue "${goal.label || "this goal"}"`}
+          confirmLabel="Discontinue"
+          confirmColor="#f59e0b"
+          fields={[{ label: "Reason (optional)", placeholder: "e.g., classroom has demonstrated this skill", optional: true }]}
+          onSubmit={([reason]) => { onChange(goal.id, "discontinued", { reason }); setConfirm(null); }}
+          onCancel={() => setConfirm(null)}
+        />
       )}
       {(confirm === "tally" || confirm === "timer") && (
         <ConfirmModal
@@ -1513,12 +1698,14 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
             fontSize: 12, fontWeight: 700, flexShrink: 0,
           }}>{index + 1}</span>
           {atCriteria && <span title="At criteria — review">🎯</span>}
+          {goal.status === "screening" && <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.5, color: "#b45309", background: "#fef3c7", borderRadius: 999, padding: "2px 7px", flexShrink: 0 }}>SCREENING</span>}
+          {goal.status === "new" && <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.5, color: "#15803d", background: "#dcfce7", borderRadius: 999, padding: "2px 7px", flexShrink: 0 }}>NEW</span>}
           <input
             value={goal.label}
             onChange={e => update({ label: e.target.value })}
             placeholder="Goal label..."
             style={{
-              flex: 1, border: "none", borderBottom: "2px solid #e2e8f0",
+              flex: 1, minWidth: 0, border: "none", borderBottom: "2px solid #e2e8f0",
               outline: "none", fontSize: 15, fontFamily: "inherit",
               fontWeight: 600, color: "#1e293b", background: "transparent", padding: "2px 4px",
             }}
@@ -2198,6 +2385,8 @@ function CompactLine({ goal, index, onTap, at, onUpdate }) {
       <span style={{ fontSize: 13, fontWeight: 600, color: "#334155", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{goal.label || "Untitled goal"}</span>
       {supTag && <span style={{ fontSize: 10, fontWeight: 700, color: "#d97706", flexShrink: 0 }}>{supTag}</span>}
       {at && <span style={{ fontSize: 12, flexShrink: 0 }}>🎯</span>}
+      {goal.status === "screening" && <span style={{ fontSize: 9, fontWeight: 800, color: "#b45309", flexShrink: 0 }}>SCR</span>}
+      {goal.status === "new" && <span style={{ fontSize: 9, fontWeight: 800, color: "#15803d", flexShrink: 0 }}>NEW</span>}
       {goal.cdEnd && <span style={{ fontSize: 12, flexShrink: 0 }}>⏱</span>}
       {goal.cdDone && <span style={{ fontSize: 12, flexShrink: 0 }}>⏰</span>}
       {goal.done && <span style={{ fontSize: 11, color: "#16a34a", fontWeight: 700, flexShrink: 0 }}>✓</span>}
@@ -2251,8 +2440,9 @@ function CompactLine({ goal, index, onTap, at, onUpdate }) {
   );
 }
 
-function BankModal({ onPick, onClose, targetName }) {
+function BankModal({ onPick, onClose, targetName, canScreen }) {
   const [openD, setOpenD] = useState(null);
+  const [asScreening, setAsScreening] = useState(false);
   const bank = window.GOAL_BANK || [];
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}>
@@ -2262,6 +2452,13 @@ function BankModal({ onPick, onClose, targetName }) {
           <a href="https://docs.google.com/document/d/1iZb3exObEJfBlzNWPZB1FGtTWH-0mvv3Y6TmwK25Lyk/edit" target="_blank" rel="noreferrer" style={{ fontSize: 11, color: "#4f46e5", marginLeft: "auto", whiteSpace: "nowrap" }}>edit doc ↗</a>
           <button onClick={onClose} style={{ background: "none", border: "none", color: "#cbd5e1", fontSize: 18, cursor: "pointer", lineHeight: 1 }}>✕</button>
         </div>
+        {canScreen && (
+          <div style={{ display: "flex", gap: 6, marginBottom: 10, alignItems: "center" }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 1 }}>Add as</span>
+            <button onClick={() => setAsScreening(false)} style={{ ...chip(!asScreening), fontSize: 12, padding: "4px 12px" }}>Goal</button>
+            <button onClick={() => setAsScreening(true)} style={{ ...chip(asScreening), fontSize: 12, padding: "4px 12px" }}>Screening</button>
+          </div>
+        )}
         {bank.length === 0 && (
           <div style={{ fontSize: 13, color: "#94a3b8" }}>Goal bank not loaded (goalbank.js missing).</div>
         )}
@@ -2276,7 +2473,7 @@ function BankModal({ onPick, onClose, targetName }) {
               <div key={si} style={{ margin: "6px 0 8px 6px" }}>
                 <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#94a3b8", margin: "6px 0 4px" }}>{st.n}</div>
                 {st.g.map((t, gi) => (
-                  <button key={gi} onClick={() => onPick(t, st.n)} style={{
+                  <button key={gi} onClick={() => onPick(t, st.n, asScreening)} style={{
                     display: "block", width: "100%", textAlign: "left", padding: "8px 10px", marginBottom: 4,
                     borderRadius: 8, border: "1.5px solid #e2e8f0", background: "#fff",
                     color: "#334155", fontSize: 12, lineHeight: 1.4, cursor: "pointer", fontFamily: "inherit",
@@ -2539,7 +2736,7 @@ function loadStore() {
         const sessions = {};
         Object.keys(parsed.sessions).forEach(k => {
           const sess = parsed.sessions[k] || {};
-          sessions[k] = { goals: (sess.goals || []).map(normalizeGoalFields), reinforcers: sess.reinforcers || "", parentNote: sess.parentNote || "", startedAt: sess.startedAt || null, bcbaInclude: !!sess.bcbaInclude, absent: !!sess.absent, absentReason: sess.absentReason || "", absentDate: sess.absentDate || "", makeupFor: sess.makeupFor || "", absentBy: sess.absentBy === "clinician" ? "clinician" : "" };
+          sessions[k] = { goals: (sess.goals || []).map(normalizeGoalFields), reinforcers: sess.reinforcers || "", parentNote: sess.parentNote || "", startedAt: sess.startedAt || null, bcbaInclude: !!sess.bcbaInclude, absent: !!sess.absent, absentReason: sess.absentReason || "", absentDate: sess.absentDate || "", makeupFor: sess.makeupFor || "", absentBy: sess.absentBy === "clinician" ? "clinician" : "", goalUpdates: Array.isArray(sess.goalUpdates) ? sess.goalUpdates.filter(u => u && typeof u.text === "string") : [] };
         });
         return { roster, selectedId: parsed.selectedId || "quick", sessions, ...planFields(parsed) };
       }
@@ -2674,9 +2871,95 @@ function App() {
   const removeGoal = (id) => setSession(prev => ({ ...prev, goals: prev.goals.filter(g => g.id !== id) }));
   const skipGoal = (id) => updateGoal(id, { skipped: true });
   const unskipGoal = (id) => updateGoal(id, { skipped: false });
-  const addGoal = () => setSession(prev =>
-    prev.goals.length < 10 ? { ...prev, goals: [...prev.goals, newGoal()] } : prev
-  );
+  const addGoal = (asScreening) => setSession(prev => {
+    if (prev.goals.filter(g => !isEnding(g)).length >= 10) return prev;
+    const g = newGoal();
+    if (store.selectedId !== "quick") g.status = asScreening ? "screening" : "new";
+    return { ...prev, goals: [...prev.goals, g] };
+  });
+
+  // Month-end: archive ending goals, make NEW goals official (templates + open session).
+  const applyGoalChanges = (sid) => setStore(prev => {
+    const k = todayKey();
+    const roster = prev.roster.map(s => {
+      if (s.id !== sid) return s;
+      const ending = (s.goals || []).filter(isEnding);
+      const archived = [...(s.archived || []), ...ending.map(t => ({ ...t, closedAt: k }))];
+      const goals = (s.goals || []).filter(t => !isEnding(t)).map(t => (t.status === "new" ? { ...t, status: "", replacesTid: "", prevStatus: "" } : t));
+      return { ...s, goals, archived };
+    });
+    const sessions = { ...prev.sessions };
+    if (sessions[sid]) {
+      sessions[sid] = { ...sessions[sid], goals: sessions[sid].goals.filter(g => !isEnding(g)).map(g => (g.status === "new" ? { ...g, status: "", replacesTid: "", prevStatus: "" } : g)) };
+    }
+    return { ...prev, roster, sessions };
+  });
+  const restoreGoal = (sid, idx) => setStore(prev => {
+    const st = prev.roster.find(s => s.id === sid);
+    if (!st || !(st.archived || [])[idx]) return prev;
+    const a = st.archived[idx];
+    const tpl = { ...a, status: "", outcome: "", reason: "", changedAt: "", replacesTid: "", prevStatus: "" };
+    delete tpl.closedAt;
+    const roster = prev.roster.map(s => (s.id === sid ? { ...s, goals: [...(s.goals || []), tpl], archived: s.archived.filter((x, i) => i !== idx) } : s));
+    const sessions = { ...prev.sessions };
+    if (sessions[sid]) sessions[sid] = { ...sessions[sid], goals: [...sessions[sid].goals, goalFromTemplate(tpl)] };
+    return { ...prev, roster, sessions };
+  });
+  const deleteArchived = (sid, idx) => setStore(prev => ({
+    ...prev,
+    roster: prev.roster.map(s => (s.id === sid ? { ...s, archived: (s.archived || []).filter((x, i) => i !== idx) } : s)),
+  }));
+
+  // Goal changes: recorded on the goal now, applied at month-end review.
+  const changeGoal = (id, kind, extra) => setSession(prev => {
+    const today = todayKey();
+    const old = prev.goals.find(g => g.id === id);
+    if (!old) return prev;
+    const label = old.label || "Untitled goal";
+    let goals = prev.goals;
+    let line = "";
+    const mark = (fields) => goals.map(g => (g.id === id ? { ...g, prevStatus: g.status || "", changedAt: today, ...fields } : g));
+    if (kind === "achieved") { goals = mark({ status: "ending", outcome: "achieved" }); line = `Goal update: Achieved — ${label}`; }
+    if (kind === "discontinued") {
+      const r = ((extra && extra.reason) || "").trim();
+      goals = mark({ status: "ending", outcome: "discontinued", reason: r });
+      line = `Goal update: Discontinued — ${label}${r ? ` (${r})` : ""}`;
+    }
+    if (kind === "notUsed") { goals = mark({ status: "ending", outcome: "notUsed" }); }
+    if (kind === "archive") { goals = mark({ status: "ending", outcome: "archived" }); }
+    if (kind === "use") { goals = goals.map(g => (g.id === id ? { ...g, prevStatus: "screening", status: "new", changedAt: today } : g)); line = `Goal update: Adding ${label} as a goal`; }
+    if (kind === "stepped") {
+      const ng = newGoal();
+      ng.label = (extra.label || "").trim() || label;
+      ng.fullGoal = (extra.fullGoal || "").trim();
+      ng.type = old.type;
+      ng.items = (old.items || []).map(it => ({ name: it.name, correct: 0, incorrect: 0, att: false, bites: [] }));
+      ng.oneTry = !!old.oneTry;
+      ng.matId = old.matId || ""; ng.matTweak = old.matTweak || "";
+      if (ng.fullGoal) {
+        const p = parseGoalText(ng.fullGoal);
+        delete p.items; delete p.oneTry;
+        if (p.type === undefined) delete p.type;
+        Object.assign(ng, p);
+        if (p.timerDuration) ng.timerRemaining = p.timerDuration;
+        if (p.support) ng.usedSupport = p.support;
+      }
+      ng.status = "new"; ng.replacesTid = old.tid; ng.changedAt = today;
+      goals = mark({ status: "ending", outcome: "stepped" });
+      const at = goals.findIndex(g => g.id === id);
+      goals = [...goals.slice(0, at + 1), ng, ...goals.slice(at + 1)];
+      line = `Goal update: ${label} → NEW: ${ng.label}`;
+    }
+    const goalUpdates = [...(prev.goalUpdates || []).filter(u => u.tid !== old.tid), ...(line ? [{ tid: old.tid, text: line }] : [])];
+    return { ...prev, goals, goalUpdates };
+  });
+  const undoChange = (id) => setSession(prev => {
+    const g0 = prev.goals.find(g => g.id === id);
+    if (!g0) return prev;
+    let goals = prev.goals.map(g => (g.id === id ? { ...g, status: g.prevStatus || "", outcome: "", reason: "", changedAt: "", prevStatus: "" } : g));
+    if (g0.outcome === "stepped") goals = goals.filter(g => !(g.replacesTid === g0.tid && g.status === "new" && !goalHasData(g)));
+    return { ...prev, goals, goalUpdates: (prev.goalUpdates || []).filter(u => u.tid !== g0.tid) };
+  });
   const setReinforcers = (val) => setSession(prev => ({ ...prev, reinforcers: val }));
   const setParentNote = (val) => setSession(prev => ({ ...prev, parentNote: val }));
   const setStudentNotes = (val) => setStore(prev => ({
@@ -2845,11 +3128,12 @@ function App() {
     });
   };
 
-  const addFromBank = (text, strandName) => {
+  const addFromBank = (text, strandName, asScreening) => {
     setShowBank(false);
     setSession(prev => {
-      if (prev.goals.length >= 10) return prev;
+      if (prev.goals.filter(g => !isEnding(g)).length >= 10) return prev;
       const g = newGoal();
+      if (store.selectedId !== "quick") g.status = asScreening ? "screening" : "new";
       g.label = strandName;
       g.fullGoal = text;
       const p = parseGoalText(text);
@@ -2887,7 +3171,7 @@ function App() {
   const shareRoster = async () => {
     const payload = JSON.stringify({
       slpRoster: 1,
-      students: roster.map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "", owed: owedOf(s) })),
+      students: roster.map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "", owed: owedOf(s), archived: s.archived || [] })),
       matLib,
       schedule: Object.fromEntries(WEEKDAYS.map(({ d }) => [d, ((store.schedule || {})[d] || []).map(id => (roster.find(s => s.id === id) || {}).name).filter(Boolean)])),
     });
@@ -2930,6 +3214,7 @@ function App() {
         targetOf: t.targetOf,
         items: t.items,
         oneTry: t.oneTry,
+        status: t.status, outcome: t.outcome, reason: t.reason, changedAt: t.changedAt, replacesTid: t.replacesTid,
         matId: t.matId,
         matTweak: t.matTweak,
       });
@@ -2943,7 +3228,7 @@ function App() {
         const inBuilding = typeof s.building === "string" ? s.building.trim() : "";
         const inOwed = (Array.isArray(s.owed) ? s.owed : []).filter(d => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d));
         if (idx === -1) {
-          newRoster.push({ id: makeId("student"), name: s.name.trim(), goals: inGoals, history: inHist.slice(-40), building: inBuilding, owed: [...new Set(inOwed)].sort() });
+          newRoster.push({ id: makeId("student"), name: s.name.trim(), goals: inGoals, history: inHist.slice(-40), building: inBuilding, owed: [...new Set(inOwed)].sort(), archived: (Array.isArray(s.archived) ? s.archived : []).filter(a => a && typeof a.tid === "string") });
           added++;
           newSessions += inHist.length;
           return;
@@ -2977,7 +3262,10 @@ function App() {
           .slice(-40);
         const building = (local.building || "").trim() ? local.building : inBuilding;
         const owed = inOwed.reduce((l, d) => addOwedDate(l, d), owedOf(local));
-        newRoster[idx] = { ...local, goals: localGoals, history, building, owed };
+        const inArch = (Array.isArray(s.archived) ? s.archived : []).filter(a => a && typeof a.tid === "string");
+        const archived = [...(local.archived || [])];
+        inArch.forEach(a => { if (!archived.some(x => x.tid === a.tid)) archived.push(a); });
+        newRoster[idx] = { ...local, goals: localGoals, history, building, owed, archived };
         if (extra.length > 0 || localGoals.length > beforeLen || updatedTpl || building !== (local.building || "") || owed.length !== owedOf(local).length) merged++;
         newSessions += extra.length;
       });
@@ -3027,8 +3315,8 @@ function App() {
     }
     let html = `<p><strong>${dateStr}</strong></p>`;
     if (makeupLine) html += `<p><em>${makeupLine}</em></p>`;
-    goals.filter(g => !g.skipped && (goalHasData(g) || (g.notes || "").trim() || matStr(g))).forEach((g, i) => {
-      const label = g.label || `Goal ${i + 1}`;
+    goals.filter(g => !g.skipped && !isEnding(g) && (goalHasData(g) || (g.notes || "").trim() || matStr(g))).forEach((g, i) => {
+      const label = `${g.status === "screening" ? "Screening: " : ""}${g.label || `Goal ${i + 1}`}`;
       // Goal with a note and/or materials but no data: copy just those.
       if (!goalHasData(g)) {
         html += `<p>${label} — ${[(g.notes || "").trim(), matStr(g)].filter(Boolean).join("; ")}</p>`;
@@ -3091,6 +3379,7 @@ function App() {
       if (matStr(g)) line += `; ${matStr(g)}`;
       html += `<p>${line}</p>`;
     });
+    (session.goalUpdates || []).forEach(u => { html += `<p><strong>${u.text}</strong></p>`; });
     if (reinforcers.trim()) {
       html += `<p><em>Reinforcers/Activities/Other: ${reinforcers.trim()}</em></p>`;
     }
@@ -3115,8 +3404,8 @@ function App() {
       return out.join("\n");
     }
     let lines = makeupLine ? [dateStr, makeupLine, ""] : [dateStr, ""];
-    goals.filter(g => !g.skipped && (goalHasData(g) || (g.notes || "").trim() || matStr(g))).forEach((g, i) => {
-      const label = g.label || `Goal ${i + 1}`;
+    goals.filter(g => !g.skipped && !isEnding(g) && (goalHasData(g) || (g.notes || "").trim() || matStr(g))).forEach((g, i) => {
+      const label = `${g.status === "screening" ? "Screening: " : ""}${g.label || `Goal ${i + 1}`}`;
       // Goal with a note and/or materials but no data: copy just those.
       if (!goalHasData(g)) {
         lines.push(`${label} — ${[(g.notes || "").trim(), matStr(g)].filter(Boolean).join("; ")}`);
@@ -3181,6 +3470,7 @@ function App() {
       lines.push(line);
       lines.push("");
     });
+    (session.goalUpdates || []).forEach(u => { lines.push(u.text); lines.push(""); });
     if (reinforcers.trim()) lines.push(`Reinforcers/Activities/Other: ${reinforcers.trim()}`);
     if (parentNote.trim()) lines.push(`Parent note: ${parentNote.trim()}`);
     if (bcbaCopy) lines.push(`BCBA collaboration: ${bcbaCopy}`);
@@ -3232,6 +3522,7 @@ function App() {
             const allT2 = (g.correct || 0) + (g.incorrect || 0) + pT + ivC + ivI;
             const accC2 = (g.correct || 0) + ivC + accB;
             const base = { tid: g.tid, label: g.label, type: g.type, correct: accC2, incorrect: allT2 - accC2, support: g.support || "ind" };
+            if (g.status === "screening") base.screening = true;
             if (ivC + ivI > 0) base.intervals = g.intervals;
             if (pT > 0) base.sup = g.sup;
             const bRuns = [...(g.biteRuns || []), ...((g.biteCount || 0) > 0 ? [g.biteCount] : [])];
@@ -3301,6 +3592,7 @@ function App() {
         <BankModal
           targetName={selectedStudent ? selectedStudent.name : "Quick session"}
           onPick={addFromBank}
+          canScreen={selectedId !== "quick"}
           onClose={() => setShowBank(false)}
         />
       )}
@@ -3332,6 +3624,9 @@ function App() {
           doneIds={doneIds}
           onUndoDone={undoDone}
           onClinicianAbsent={toggleClinicianAbsent}
+          onApplyGoals={applyGoalChanges}
+          onRestoreGoal={restoreGoal}
+          onDeleteArchived={deleteArchived}
           onClose={() => setShowPlan(false)}
         />
       )}
@@ -3490,7 +3785,7 @@ function App() {
             )}
           </div>
         )}
-        {!isAbsent && goals.filter(g => !g.skipped).map((g, i) => (
+        {!isAbsent && goals.filter(g => !g.skipped && !isEnding(g)).map((g, i) => (
           compactView && g.id !== expandedId ? (
             <CompactLine key={g.id} goal={g} index={i} at={goalAtCriteria(g, studentHistory)} onTap={() => setExpandedId(g.id)} onUpdate={updateGoal} />
           ) : (
@@ -3502,7 +3797,7 @@ function App() {
                   cursor: "pointer", fontFamily: "inherit", marginBottom: 4,
                 }}>▴ collapse</button>
               )}
-              <GoalCard goal={g} index={i} onUpdate={updateGoal} onRemove={removeGoal} onSkip={skipGoal} canSkip={selectedId !== "quick"} history={pointsFor(studentHistory, g.tid)} atCriteria={goalAtCriteria(g, studentHistory)} rawHistory={studentHistory} />
+              <GoalCard goal={g} index={i} onUpdate={updateGoal} onRemove={removeGoal} onSkip={skipGoal} onChange={changeGoal} canSkip={selectedId !== "quick"} history={pointsFor(studentHistory, g.tid)} atCriteria={goalAtCriteria(g, studentHistory)} rawHistory={studentHistory} />
             </React.Fragment>
           )
         ))}
@@ -3521,13 +3816,37 @@ function App() {
             ))}
           </div>
         )}
-        {!isAbsent && goals.length < 10 && (
-          <button onClick={addGoal} style={{
-            width: "100%", padding: "12px", borderRadius: 12,
-            border: "2px dashed #c7d2fe", background: "#eef2ff",
-            color: "#4f46e5", fontWeight: 700, fontSize: 14,
-            cursor: "pointer", fontFamily: "inherit", marginBottom: 12,
-          }}>+ Add Goal ({goals.length}/10)</button>
+        {!isAbsent && goals.some(isEnding) && (
+          <div style={{
+            background: "#fffbeb", border: "1.5px dashed #fcd34d", borderRadius: 12,
+            padding: "10px 12px", marginBottom: 12, fontSize: 12, color: "#92400e",
+          }}>
+            <div style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, fontSize: 10, color: "#b45309", marginBottom: 4 }}>Changes waiting for month-end review</div>
+            {goals.filter(isEnding).map(g => (
+              <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0" }}>
+                <span style={{ flex: 1 }}><strong>{OUTCOME_LABEL[g.outcome] || "Changed"}</strong> — {g.label || "Untitled goal"}{g.reason ? ` (${g.reason})` : ""}</span>
+                <button onClick={() => undoChange(g.id)} style={{ ...smallBtn, fontSize: 11 }}>Undo</button>
+              </div>
+            ))}
+          </div>
+        )}
+        {!isAbsent && goals.filter(g => !isEnding(g)).length < 10 && (
+          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+            <button onClick={() => addGoal(false)} style={{
+              flex: 2, padding: "12px", borderRadius: 12,
+              border: "2px dashed #c7d2fe", background: "#eef2ff",
+              color: "#4f46e5", fontWeight: 700, fontSize: 14,
+              cursor: "pointer", fontFamily: "inherit",
+            }}>+ Add Goal ({goals.filter(g => !isEnding(g)).length}/10)</button>
+            {selectedId !== "quick" && (
+              <button onClick={() => addGoal(true)} style={{
+                flex: 1, padding: "12px 6px", borderRadius: 12,
+                border: "2px dashed #fcd34d", background: "#fffbeb",
+                color: "#b45309", fontWeight: 700, fontSize: 13,
+                cursor: "pointer", fontFamily: "inherit",
+              }}>+ Screening</button>
+            )}
+          </div>
         )}
 
         {!isAbsent && <div style={{ marginBottom: 16 }}>
@@ -3620,7 +3939,10 @@ function App() {
           {makeupLine && (
             <div style={{ fontSize: 13, color: "#7dd3fc", fontWeight: 700, marginBottom: 8 }}>🔁 {makeupLine}</div>
           )}
-          {!isAbsent && goals.filter(g => !g.skipped).map((g, i) => <SummaryLine key={g.id} goal={g} index={i} />)}
+          {!isAbsent && goals.filter(g => !g.skipped && !isEnding(g)).map((g, i) => <SummaryLine key={g.id} goal={g} index={i} />)}
+          {(session.goalUpdates || []).map(u => (
+            <div key={u.tid} style={{ fontSize: 13, color: "#fde68a", fontWeight: 700, marginBottom: 8 }}>{u.text}</div>
+          ))}
           {!isAbsent && goals.some(g => !g.skipped && goalAtCriteria(g, studentHistory)) && (
             <div style={{ background: "#312e81", borderRadius: 9, padding: "8px 10px", fontSize: 12, color: "#c7d2fe", marginBottom: 8 }}>
               🎯 At criteria — review: {goals.filter(g => !g.skipped && goalAtCriteria(g, studentHistory)).map((g, i) => g.label || `Goal ${i + 1}`).join("; ")} <span style={{ opacity: 0.7 }}>(screen only — not copied)</span>
