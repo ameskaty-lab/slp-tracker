@@ -54,6 +54,51 @@ const DURATION_OPTIONS = [
   { label: "10m", seconds: 600 },
 ];
 
+const BASIC_CATEGORIES = ["Food", "Toys", "Clothes", "Animals", "Vehicles", "Furniture", "Body parts", "People", "Places", "Tools"];
+const BITE_KINDS = [
+  { k: "f", label: "Full", word: "full", bg: "#22c55e", sh: "#16a34a" },
+  { k: "p", label: "Partial", word: "partial", bg: "#f59e0b", sh: "#b45309" },
+  { k: "h", label: "With help", word: "with help", bg: "#3b82f6", sh: "#1d4ed8" },
+];
+
+// Bites are stored per food as a list of codes: f/p/h for a bite, "|" for a break.
+function biteRunsOf(it) {
+  const runs = [];
+  let curr = [];
+  (it.bites || []).forEach(c => {
+    if (c === "|") { if (curr.length) runs.push(curr); curr = []; }
+    else curr.push(c);
+  });
+  if (curr.length) runs.push(curr);
+  return runs;
+}
+function foodBitesSummary(it) {
+  const runs = biteRunsOf(it);
+  if (runs.length === 0) return "";
+  const all = runs.flat();
+  const counts = BITE_KINDS.map(b => ({ ...b, n: all.filter(c => c === b.k).length })).filter(b => b.n > 0);
+  const kinds = counts.length === 1 && counts[0].k === "f" ? "all full" : counts.map(b => `${b.n} ${b.word}`).join(", ");
+  return `${it.name}: ${runs.map(r => r.length).join(", ")} in a row before a break (${kinds})`;
+}
+function bitesSummary(g) {
+  const parts = (g.items || []).map(foodBitesSummary).filter(Boolean);
+  return parts.length ? parts.join("; ") : "no bites";
+}
+function bitesHaveData(g) {
+  return (g.items || []).some(it => (it.bites || []).some(c => c !== "|"));
+}
+function longestRun(it) {
+  return biteRunsOf(it).reduce((m, r) => Math.max(m, r.length), 0);
+}
+// One-try category goals: total + which were missed.
+function oneTrySummary(g) {
+  const tried = (g.items || []).filter(it => (it.correct || 0) + (it.incorrect || 0) > 0);
+  if (tried.length === 0) return "no trials";
+  const c = tried.filter(it => (it.correct || 0) > 0).length;
+  const missed = tried.filter(it => !((it.correct || 0) > 0)).map(it => it.name);
+  return `${c}/${tried.length} — ${Math.round((c / tried.length) * 100)}%${missed.length ? `; missed: ${missed.join(", ")}` : ""}`;
+}
+
 const SUPPORT_CODES = ["ind", "sp", "f", "p", "oh", "s", "r", "g", "m", "im", "k", "m+d", "1m", "2m", "3m"];
 
 function formatTime(s) {
@@ -114,6 +159,13 @@ function parseGoalText(text) {
     [/kinesthetic/, "k"],
   ];
   for (const [re2, code] of sup) { if (re2.test(t)) { out.support = code; break; } }
+  if (/\bbites?\b|\bbiting\b|bite through|bite into/.test(t)) {
+    out.type = "bites";
+  }
+  if (/categor/.test(t) && !/attribute|abstract|subcategor/.test(t)) {
+    out.items = BASIC_CATEGORIES.map(name => ({ name, correct: 0, incorrect: 0, att: false, bites: [] }));
+    if (/name (the )?categor|naming (the )?categor/.test(t)) out.oneTry = true;
+  }
   if (out.type === undefined && out.timerDuration) {
     out.type = "tally"; out.target = 1;
     if (out.ruleMode === undefined) { out.ruleMode = "row"; out.ruleN = 3; }
@@ -295,7 +347,7 @@ function goalFromTemplate(t) {
     ...newGoal(),
     tid: t.tid || makeId("t"),
     label: t.label || "",
-    type: ["tally", "duration"].includes(t.type) ? t.type : "percent",
+    type: ["tally", "duration", "bites"].includes(t.type) ? t.type : "percent",
     timerDuration: t.timerDuration ?? null,
     timerRemaining: t.timerDuration ?? null,
     fullGoal: t.fullGoal || "",
@@ -307,7 +359,8 @@ function goalFromTemplate(t) {
     usedSupport: typeof t.support === "string" && t.support ? t.support : "ind",
     supportOk: Array.isArray(t.supportOk) ? t.supportOk : [],
     biteTarget: typeof t.biteTarget === "number" ? t.biteTarget : 0,
-    items: (t.items || []).map(it => ({ name: typeof it === "string" ? it : String((it && it.name) || ""), correct: 0, incorrect: 0, att: false })),
+    items: (t.items || []).map(it => ({ name: typeof it === "string" ? it : String((it && it.name) || ""), correct: 0, incorrect: 0, att: false, bites: [] })),
+    oneTry: !!t.oneTry,
     activeItem: 0,
     matId: typeof t.matId === "string" ? t.matId : "",
     matTweak: typeof t.matTweak === "string" ? t.matTweak : "",
@@ -329,6 +382,7 @@ function templatesFromGoals(goals) {
     supportOk: Array.isArray(g.supportOk) ? g.supportOk : [],
     biteTarget: typeof g.biteTarget === "number" ? g.biteTarget : 0,
     items: (g.items || []).map(it => ({ name: it.name })),
+    oneTry: !!g.oneTry,
     matId: g.matId || "",
     matTweak: g.matTweak || "",
   }));
@@ -340,7 +394,7 @@ function normalizeGoalFields(g) {
     tid: g.tid || makeId("t"),
     skipped: !!g.skipped,
     done: !!g.done,
-    type: ["tally", "duration"].includes(g.type) ? g.type : "percent",
+    type: ["tally", "duration", "bites"].includes(g.type) ? g.type : "percent",
     durations: Array.isArray(g.durations) ? g.durations.filter(d => typeof d === "number") : [],
     support: typeof g.support === "string" && g.support ? g.support : "ind",
     usedSupport: typeof g.usedSupport === "string" && g.usedSupport ? g.usedSupport : "ind",
@@ -358,7 +412,8 @@ function normalizeGoalFields(g) {
     targetOf: typeof g.targetOf === "number" ? g.targetOf : null,
     ruleMode: ["total", "opps", "across"].includes(g.ruleMode) ? g.ruleMode : "row",
     ruleN: typeof g.ruleN === "number" ? g.ruleN : 3,
-    items: Array.isArray(g.items) ? g.items.map(it => ({ name: String((it && it.name) || (typeof it === "string" ? it : "")), correct: (it && it.correct) || 0, incorrect: (it && it.incorrect) || 0, att: !!(it && it.att) })) : [],
+    items: Array.isArray(g.items) ? g.items.map(it => ({ name: String((it && it.name) || (typeof it === "string" ? it : "")), correct: (it && it.correct) || 0, incorrect: (it && it.incorrect) || 0, att: !!(it && it.att), bites: Array.isArray(it && it.bites) ? it.bites.filter(c => ["f", "p", "h", "|"].includes(c)) : [] })) : [],
+    oneTry: !!g.oneTry,
     activeItem: typeof g.activeItem === "number" ? g.activeItem : 0,
     matId: typeof g.matId === "string" ? g.matId : "",
     matTweak: typeof g.matTweak === "string" ? g.matTweak : "",
@@ -395,6 +450,7 @@ function itemPointsFor(history, tid, name) {
 
 function goalHasData(g) {
   if (g.zeroLogged) return true;
+  if (g.type === "bites") return bitesHaveData(g);
   if (g.type === "duration") return (g.durations || []).length > 0;
   if ((g.items || []).length > 0) return g.items.some(it => (it.correct || 0) + (it.incorrect || 0) > 0 || it.att);
   return (g.correct || 0) + (g.incorrect || 0)
@@ -404,6 +460,8 @@ function goalHasData(g) {
 }
 
 function itemsSummary(g) {
+  if (g.type === "bites") return bitesSummary(g);
+  if (g.oneTry) return oneTrySummary(g);
   const items = (g.items || []).filter(it => (it.correct || 0) + (it.incorrect || 0) > 0 || it.att);
   if (items.length === 0) return g.type === "percent" ? "no trials" : "0x";
   const tc = items.reduce((s, it) => s + (it.correct || 0), 0);
@@ -420,6 +478,7 @@ function itemsSummary(g) {
 }
 
 function goalAtCriteria(goal, history) {
+  if (goal.type === "bites" || goal.oneTry) return false;
   if ((goal.items || []).length > 0) {
     return goal.items.every(it =>
       isAtCriteria({ ...goal, correct: it.correct || 0, incorrect: it.incorrect || 0 }, itemPointsFor(history, goal.tid, it.name))
@@ -496,6 +555,7 @@ function isAtCriteria(goal, pastPoints) {
 function sessionHasData(sess) {
   return (sess.goals || []).some(g =>
     (g.type === "duration" ? (g.durations || []).length > 0 : false)
+    || (g.type === "bites" && bitesHaveData(g))
     || (g.items || []).some(it => (it.correct || 0) + (it.incorrect || 0) > 0)
     || (g.correct || 0) + (g.incorrect || 0) > 0
     || Object.values(g.sup || {}).reduce((s, b) => s + (b.c || 0) + (b.i || 0), 0) > 0
@@ -793,7 +853,7 @@ function DayGroups({ ids, roster, onMoveGroup, renderStudent }) {
   ));
 }
 
-function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, schedule, setDayIds, matLib, setLib, onOpenStudent, onClose, sessions, onToggleAbsent, doneIds, onUndoDone }) {
+function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, schedule, setDayIds, matLib, setLib, onOpenStudent, onClose, sessions, onToggleAbsent, doneIds, onUndoDone, onClinicianAbsent }) {
   const [tab, setTab] = useState("today");
   const wd = new Date().getDay();
   const [day, setDay] = useState(wd >= 1 && wd <= 5 ? wd : 1);
@@ -904,6 +964,17 @@ function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, 
                   </>
                 ) : usualHas ? <span>Your usual list for today</span> : <span>No usual list for today — set one up in the Week tab.</span>}
               </div>
+              {todayIds.filter(id => !doneIds.includes(id)).length > 0 && (() => {
+                const left = todayIds.filter(id => !doneIds.includes(id));
+                const on = left.every(id => (sessions[id] || {}).absentBy === "clinician");
+                return (
+                  <button onClick={onClinicianAbsent} style={{
+                    width: "100%", padding: "10px", borderRadius: 12, marginBottom: 14, cursor: "pointer", fontFamily: "inherit",
+                    fontWeight: 700, fontSize: 13, border: `2px solid ${on ? "#ef4444" : "#fecaca"}`,
+                    background: on ? "#ef4444" : "#fff5f5", color: on ? "#fff" : "#dc2626",
+                  }}>{on ? "✓ Clinician absent today — tap to undo" : "🩺 I'm out today (clinician absent)"}</button>
+                );
+              })()}
               <DayGroups ids={todayIds.filter(id => !doneIds.includes(id))} roster={roster} renderStudent={renderToday}
                 onMoveGroup={(b, dir) => setTodayIds(ids => moveGroupInList(ids, b, dir, roster))} />
               {doneIds.length > 0 && (
@@ -976,7 +1047,157 @@ function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, 
   );
 }
 
-function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, atCriteria }) {
+// Food goals: tap a bite (Full / Partial / With help) and Break to end a run.
+function BitesPanel({ goal, onUpdate }) {
+  const [adding, setAdding] = useState(false);
+  const foods = goal.items || [];
+  const ai = foods.length ? Math.min(goal.activeItem || 0, foods.length - 1) : 0;
+  const cur = foods[ai];
+  const runs = cur ? biteRunsOf(cur) : [];
+  const open = cur && (cur.bites || []).length > 0 && cur.bites[cur.bites.length - 1] !== "|";
+  const curRun = open ? runs[runs.length - 1] : [];
+  const pastRuns = open ? runs.slice(0, -1) : runs;
+  const push = (code) => onUpdate(goal.id, (prev) => {
+    const idx = Math.min(prev.activeItem || 0, (prev.items || []).length - 1);
+    return { ...prev, items: (prev.items || []).map((it, i) => {
+      if (i !== idx) return it;
+      const b = it.bites || [];
+      if (code === "|" && (b.length === 0 || b[b.length - 1] === "|")) return it;
+      return { ...it, bites: [...b, code] };
+    }) };
+  });
+  const undo = () => onUpdate(goal.id, (prev) => {
+    const idx = Math.min(prev.activeItem || 0, (prev.items || []).length - 1);
+    return { ...prev, items: (prev.items || []).map((it, i) => (i === idx ? { ...it, bites: (it.bites || []).slice(0, -1) } : it)) };
+  });
+  const bigBtn = (bg, sh) => ({
+    flex: 1, padding: "14px 4px", borderRadius: 12, border: "none", background: bg, color: "#fff",
+    fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", boxShadow: `0 3px 0 ${sh}`,
+  });
+  return (
+    <div>
+      {adding && (
+        <PromptModal title="Add food" placeholder="Food (e.g., chicken)..."
+          onSubmit={(name) => {
+            onUpdate(goal.id, (prev) => ({ ...prev, items: [...(prev.items || []), { name, correct: 0, incorrect: 0, att: false, bites: [] }], activeItem: (prev.items || []).length }));
+            setAdding(false);
+          }}
+          onCancel={() => setAdding(false)} />
+      )}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 10 }}>
+        {foods.map((it, i) => {
+          const r = biteRunsOf(it).map(x => x.length);
+          return (
+            <span key={i} style={{ display: "inline-flex", alignItems: "center", borderRadius: 999, border: `2px solid ${i === ai ? "#f59e0b" : "#e2e8f0"}`, background: i === ai ? "#fef3c7" : "#fff" }}>
+              <button onClick={() => onUpdate(goal.id, (prev) => ({ ...prev, activeItem: i }))} style={{
+                background: "none", border: "none", padding: "6px 4px 6px 12px", cursor: "pointer", fontFamily: "inherit",
+                fontSize: 13, fontWeight: 700, color: i === ai ? "#92400e" : "#64748b",
+              }}>{it.name}{r.length ? ` · ${r.join(",")}` : ""}</button>
+              <button onClick={() => onUpdate(goal.id, (prev) => ({ ...prev, items: (prev.items || []).filter((x, xi) => xi !== i), activeItem: 0 }))} title="Remove food" style={{
+                background: "none", border: "none", padding: "6px 10px 6px 2px", cursor: "pointer", fontSize: 11, color: "#cbd5e1",
+              }}>✕</button>
+            </span>
+          );
+        })}
+        <button onClick={() => setAdding(true)} style={{
+          padding: "6px 10px", borderRadius: 999, border: "1.5px dashed #fcd34d", background: "#fffbeb",
+          color: "#b45309", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+        }}>+ food</button>
+      </div>
+      {!cur ? (
+        <div style={{ fontSize: 13, color: "#94a3b8", marginBottom: 12 }}>Add a food to start counting bites.</div>
+      ) : (
+        <>
+          <div style={{ background: "#fffbeb", borderRadius: 10, padding: "10px 14px", marginBottom: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#b45309" }}>{cur.name}</div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+              <span style={{ fontFamily: "monospace", fontSize: 26, fontWeight: 800, color: "#1e293b" }}>{curRun.length}</span>
+              <span style={{ fontSize: 12, color: "#64748b", fontWeight: 600 }}>in a row now</span>
+              <span style={{ marginLeft: "auto", fontSize: 13, letterSpacing: 2 }}>
+                {curRun.map((c, i) => <span key={i} style={{ color: (BITE_KINDS.find(b => b.k === c) || {}).bg }}>●</span>)}
+              </span>
+            </div>
+            {pastRuns.length > 0 && (
+              <div style={{ fontSize: 12, color: "#92400e", marginTop: 2 }}>Before breaks: {pastRuns.map(r => r.length).join(", ")}</div>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+            {BITE_KINDS.map(b => (
+              <button key={b.k} onClick={() => push(b.k)} style={bigBtn(b.bg, b.sh)}>{b.label}</button>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+            <button onClick={() => push("|")} disabled={!open} style={{
+              flex: 2, padding: "11px", borderRadius: 12, border: "2px solid #e2e8f0", background: open ? "#f1f5f9" : "#f8fafc",
+              color: open ? "#334155" : "#cbd5e1", fontSize: 14, fontWeight: 800, cursor: open ? "pointer" : "default", fontFamily: "inherit",
+            }}>⏸ Break</button>
+            <button onClick={undo} style={{
+              flex: 1, padding: "11px", borderRadius: 12, border: "2px solid #e2e8f0", background: "#f8fafc",
+              color: "#64748b", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+            }}>↩ Undo</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Category goals where each category gets one try (e.g., naming the category).
+function OneTryPanel({ goal, onUpdate, rawHistory }) {
+  const [adding, setAdding] = useState(false);
+  const cats = goal.items || [];
+  const set = (i, ok) => onUpdate(goal.id, (prev) => ({ ...prev, items: (prev.items || []).map((it, xi) => {
+    if (xi !== i) return it;
+    const already = ok ? (it.correct || 0) > 0 : (it.incorrect || 0) > 0;
+    return already ? { ...it, correct: 0, incorrect: 0 } : { ...it, correct: ok ? 1 : 0, incorrect: ok ? 0 : 1 };
+  }) }));
+  const gotBefore = new Set();
+  (rawHistory || []).forEach(h => (h.goals || []).forEach(hg => {
+    if (hg.tid !== goal.tid) return;
+    (hg.items || []).forEach(it => { if ((it.correct || 0) > 0) gotBefore.add(String(it.name || "").trim().toLowerCase()); });
+  }));
+  cats.forEach(it => { if ((it.correct || 0) > 0) gotBefore.add(it.name.trim().toLowerCase()); });
+  const got = cats.filter(it => gotBefore.has(it.name.trim().toLowerCase())).map(it => it.name);
+  const still = cats.filter(it => !gotBefore.has(it.name.trim().toLowerCase())).map(it => it.name);
+  const tried = cats.filter(it => (it.correct || 0) + (it.incorrect || 0) > 0);
+  const c = tried.filter(it => (it.correct || 0) > 0).length;
+  return (
+    <div>
+      {adding && (
+        <PromptModal title="Add category" placeholder="Category (e.g., Weather)..."
+          onSubmit={(name) => { onUpdate(goal.id, (prev) => ({ ...prev, items: [...(prev.items || []), { name, correct: 0, incorrect: 0, att: false, bites: [] }] })); setAdding(false); }}
+          onCancel={() => setAdding(false)} />
+      )}
+      <div style={{ background: "#f1f5f9", borderRadius: 10, padding: "8px 14px", marginBottom: 8, display: "flex", alignItems: "baseline", gap: 8 }}>
+        <span style={{ fontFamily: "monospace", fontSize: 22, fontWeight: 800, color: "#1e293b" }}>{c}/{tried.length}</span>
+        <span style={{ fontSize: 12, color: "#64748b", fontWeight: 600 }}>one try each</span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 }}>
+        {cats.map((it, i) => {
+          const ok = (it.correct || 0) > 0, no = (it.incorrect || 0) > 0;
+          return (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: ok ? "#15803d" : no ? "#b91c1c" : "#334155" }}>{it.name}</span>
+              <button onClick={() => set(i, true)} style={{ width: 44, height: 34, borderRadius: 9, border: "none", cursor: "pointer", fontSize: 16, fontWeight: 800, background: ok ? "#22c55e" : "#f0fdf4", color: ok ? "#fff" : "#16a34a" }}>✓</button>
+              <button onClick={() => set(i, false)} style={{ width: 44, height: 34, borderRadius: 9, border: "none", cursor: "pointer", fontSize: 16, fontWeight: 800, background: no ? "#ef4444" : "#fef2f2", color: no ? "#fff" : "#dc2626" }}>✗</button>
+              <button onClick={() => onUpdate(goal.id, (prev) => ({ ...prev, items: (prev.items || []).filter((x, xi) => xi !== i) }))} title="Remove category" style={{ background: "none", border: "none", color: "#cbd5e1", cursor: "pointer", fontSize: 12 }}>✕</button>
+            </div>
+          );
+        })}
+      </div>
+      <button onClick={() => setAdding(true)} style={{ padding: "5px 10px", borderRadius: 999, border: "1.5px dashed #c7d2fe", background: "#eef2ff", color: "#4f46e5", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", marginBottom: 8 }}>+ category</button>
+      {cats.length > 0 && (
+        <div style={{ fontSize: 12, color: "#64748b", lineHeight: 1.5, marginBottom: 10, background: "#f8fafc", borderRadius: 8, padding: "6px 10px" }}>
+          <span style={{ color: "#15803d", fontWeight: 700 }}>Got:</span> {got.length ? got.join(", ") : "none yet"}
+          <span style={{ color: "#94a3b8" }}> · </span>
+          <span style={{ color: "#b45309", fontWeight: 700 }}>Still to get:</span> {still.length ? still.join(", ") : "all done!"}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, atCriteria, rawHistory }) {
   const intervalRef = useRef(null);
   const [confirm, setConfirm] = useState(null);
   const [timerOpen, setTimerOpen] = useState(false);
@@ -1098,7 +1319,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
   const doConfirm = (type) => {
     if (type === "tally") {
       if (isDur) update({ durations: [] });
-      else if (hasItems) onUpdate(goal.id, (prev) => ({ ...prev, items: (prev.items || []).map(it => ({ ...it, correct: 0, incorrect: 0 })) }));
+      else if (hasItems) onUpdate(goal.id, (prev) => ({ ...prev, items: (prev.items || []).map(it => ({ ...it, correct: 0, incorrect: 0, bites: [] })) }));
       else update({ correct: 0, incorrect: 0, sup: {}, ctxData: { str: { c: 0, i: 0 }, unstr: { c: 0, i: 0 } }, biteCount: 0, biteRuns: [], intervals: [], zeroLogged: false });
     }
     if (type === "timer") update({ timerRemaining: goal.timerDuration, timerRunning: false, timerAlert: false });
@@ -1192,7 +1413,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
         <MaterialsRow goal={goal} onUpdate={onUpdate} />
 
         <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-          {["percent", "tally", "duration"].map(t => (
+          {["percent", "tally", "duration", "bites"].map(t => (
             <button key={t} onClick={() => update({ type: t })} style={{
               flex: 1, padding: "6px 0", borderRadius: 8, border: "2px solid",
               borderColor: goal.type === t ? "#4f46e5" : "#e2e8f0",
@@ -1200,7 +1421,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
               color: goal.type === t ? "#fff" : "#64748b",
               fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s",
             }}>
-              {t === "percent" ? "% Correct" : t === "tally" ? "Tally" : "Time"}
+              {t === "percent" ? "% Correct" : t === "tally" ? "Tally" : t === "duration" ? "Time" : "Bites"}
             </button>
           ))}
         </div>
@@ -1247,6 +1468,14 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
             onCancel={() => setItemPrompt(false)}
           />
         )}
+        {goal.type === "bites" ? (
+          <BitesPanel goal={goal} onUpdate={onUpdate} />
+        ) : (hasItems && goal.oneTry) ? (
+          <>
+            <OneTryPanel goal={goal} onUpdate={onUpdate} rawHistory={rawHistory} />
+            <button onClick={() => update({ oneTry: false })} style={{ background: "none", border: "none", color: "#94a3b8", fontSize: 11, cursor: "pointer", fontFamily: "inherit", padding: "0 0 10px" }}>Switch to counting several tries per category</button>
+          </>
+        ) : (<>
         {hasItems && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 10 }}>
             {goal.items.map((it, i) => {
@@ -1268,6 +1497,11 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
               background: "#eef2ff", color: "#4f46e5", fontSize: 13, fontWeight: 600,
               cursor: "pointer", fontFamily: "inherit",
             }}>+ item</button>
+            <button onClick={() => update({ oneTry: true })} title="Each category gets one ✓ / ✗ (e.g., naming the category)" style={{
+              padding: "6px 10px", borderRadius: 999, border: "1.5px solid #e2e8f0",
+              background: "#fff", color: "#94a3b8", fontSize: 11, fontWeight: 700,
+              cursor: "pointer", fontFamily: "inherit",
+            }}>one try each?</button>
           </div>
         )}
         <div style={{
@@ -1423,6 +1657,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
             background: "#fff5f5", color: "#ef4444", fontSize: 16, fontWeight: 700, cursor: "pointer",
           }}>↺</button>
         </div>
+        </>)}
 
         <div>
           <button onClick={() => setTimerOpen(v => !v)} style={{
@@ -1648,6 +1883,14 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
                   padding: "3px 10px", borderRadius: 999, border: "1.5px dashed #c7d2fe",
                   background: "#eef2ff", color: "#4f46e5", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
                 }}>+ item</button>
+                <button onClick={() => onUpdate(goal.id, (prev) => {
+                  const have = new Set((prev.items || []).map(it => it.name.trim().toLowerCase()));
+                  const add = BASIC_CATEGORIES.filter(n => !have.has(n.toLowerCase())).map(name => ({ name, correct: 0, incorrect: 0, att: false, bites: [] }));
+                  return { ...prev, items: [...(prev.items || []), ...add] };
+                })} style={{
+                  padding: "3px 10px", borderRadius: 999, border: "1.5px solid #c7d2fe",
+                  background: "#fff", color: "#4f46e5", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+                }}>+ basic categories</button>
                 <span style={{ fontSize: 11, color: "#94a3b8" }}>(optional — for multi-item goals)</span>
               </div>
               )}
@@ -1799,7 +2042,13 @@ function CompactLine({ goal, index, onTap, at, onUpdate }) {
   let s;
   const hasIt = (goal.items || []).length > 0;
   const aiC = hasIt ? Math.min(goal.activeItem || 0, goal.items.length - 1) : 0;
-  if (goal.type === "duration") {
+  if (goal.type === "bites") {
+    const best = (goal.items || []).reduce((m, it) => Math.max(m, longestRun(it)), 0);
+    s = bitesHaveData(goal) ? `best ${best} in a row` : "—";
+  } else if (hasIt && goal.oneTry) {
+    const tried = goal.items.filter(it => (it.correct || 0) + (it.incorrect || 0) > 0);
+    s = tried.length ? `${tried.filter(it => (it.correct || 0) > 0).length}/${tried.length}` : "—";
+  } else if (goal.type === "duration") {
     const n = (goal.durations || []).length;
     s = n > 0 ? `${n} stretch${n === 1 ? "" : "es"} · ${formatTime(Math.max(...goal.durations))}` : "—";
   } else if (hasIt) {
@@ -1830,7 +2079,7 @@ function CompactLine({ goal, index, onTap, at, onUpdate }) {
       {at && <span style={{ fontSize: 12, flexShrink: 0 }}>🎯</span>}
       {goal.done && <span style={{ fontSize: 11, color: "#16a34a", fontWeight: 700, flexShrink: 0 }}>✓</span>}
       <span style={{ fontSize: 13, fontWeight: 700, color: "#4f46e5", fontFamily: "ui-monospace, Menlo, monospace", flexShrink: 0 }}>{s}</span>
-      {hasIt && goal.items[aiC] && (
+      {hasIt && goal.items[aiC] && !goal.oneTry && goal.type !== "bites" && (
         <span style={{ position: "relative", flexShrink: 0 }}>
           <button onClick={(e) => { e.stopPropagation(); setItemMenu(v => !v); }} style={{
             fontSize: 10, fontWeight: 700, color: "#4f46e5", background: "#ede9fe", border: "none",
@@ -1861,14 +2110,14 @@ function CompactLine({ goal, index, onTap, at, onUpdate }) {
           )}
         </span>
       )}
-      {goal.type !== "duration" && (
+      {goal.type !== "duration" && goal.type !== "bites" && !goal.oneTry && (
         <button onClick={(e) => { e.stopPropagation(); if (!locked) applyTap(goal, "correct", 1, onUpdate); }} disabled={locked} style={{
           width: 36, height: 36, borderRadius: 10, border: "none", flexShrink: 0,
           background: locked ? "#cbd5e1" : "#22c55e", color: "#fff", fontSize: 18, fontWeight: 700,
           cursor: locked ? "default" : "pointer",
         }}>+</button>
       )}
-      {goal.type === "percent" && (
+      {goal.type === "percent" && !goal.oneTry && (
         <button onClick={(e) => { e.stopPropagation(); if (!locked) applyTap(goal, "incorrect", 1, onUpdate); }} disabled={locked} style={{
           width: 36, height: 36, borderRadius: 10, border: "none", flexShrink: 0,
           background: locked ? "#cbd5e1" : "#ef4444", color: "#fff", fontSize: 18, fontWeight: 700,
@@ -2167,7 +2416,7 @@ function loadStore() {
         const sessions = {};
         Object.keys(parsed.sessions).forEach(k => {
           const sess = parsed.sessions[k] || {};
-          sessions[k] = { goals: (sess.goals || []).map(normalizeGoalFields), reinforcers: sess.reinforcers || "", parentNote: sess.parentNote || "", startedAt: sess.startedAt || null, bcbaInclude: !!sess.bcbaInclude, absent: !!sess.absent, absentReason: sess.absentReason || "", absentDate: sess.absentDate || "", makeupFor: sess.makeupFor || "" };
+          sessions[k] = { goals: (sess.goals || []).map(normalizeGoalFields), reinforcers: sess.reinforcers || "", parentNote: sess.parentNote || "", startedAt: sess.startedAt || null, bcbaInclude: !!sess.bcbaInclude, absent: !!sess.absent, absentReason: sess.absentReason || "", absentDate: sess.absentDate || "", makeupFor: sess.makeupFor || "", absentBy: sess.absentBy === "clinician" ? "clinician" : "" };
         });
         return { roster, selectedId: parsed.selectedId || "quick", sessions, ...planFields(parsed) };
       }
@@ -2300,10 +2549,34 @@ function App() {
       sess = { ...cur, absent: true, absentDate: k, makeupFor: "" };
       roster = prev.roster.map(s => (s.id === sid ? { ...s, owed: addOwedDate(owedOf(s), k) } : s));
     } else {
-      sess = { ...cur, absent: false, absentDate: "", absentReason: "" };
+      sess = { ...cur, absent: false, absentDate: "", absentReason: "", absentBy: "" };
       roster = prev.roster.map(s => (s.id === sid ? { ...s, owed: owedOf(s).filter(d => d !== cur.absentDate) } : s));
     }
     return { ...prev, roster, sessions: { ...prev.sessions, [sid]: sess } };
+  });
+  // Clinician out: mark every student still to see today as absent (clinician), add makeups owed.
+  // Tapping again undoes it for anyone marked that way.
+  const toggleClinicianAbsent = () => setStore(prev => {
+    const k = todayKey();
+    const ids = new Set(prev.roster.map(s => s.id));
+    const base = ((prev.dayOverride && prev.dayOverride.date === k) ? prev.dayOverride.ids : (((prev.schedule || {})[new Date().getDay()]) || [])).filter(id => ids.has(id));
+    const done = (prev.dayDone && prev.dayDone.date === k) ? prev.dayDone.ids : [];
+    const targets = base.filter(id => !done.includes(id));
+    if (targets.length === 0) return prev;
+    const undo = targets.every(id => (prev.sessions[id] || {}).absentBy === "clinician");
+    const sessions = { ...prev.sessions };
+    let roster = prev.roster;
+    targets.forEach(id => {
+      const cur = sessionFor(prev, id);
+      if (undo) {
+        sessions[id] = { ...cur, absent: false, absentBy: "", absentReason: "", absentDate: "" };
+        roster = roster.map(s => (s.id === id ? { ...s, owed: owedOf(s).filter(d => d !== cur.absentDate) } : s));
+      } else if (!cur.absent) {
+        sessions[id] = { ...cur, absent: true, absentBy: "clinician", absentReason: "", absentDate: k, makeupFor: "" };
+        roster = roster.map(s => (s.id === id ? { ...s, owed: addOwedDate(owedOf(s), k) } : s));
+      }
+    });
+    return { ...prev, sessions, roster };
   });
   const setSessionFields = (fields) => setStore(prev => {
     const cur = prev.sessions[prev.selectedId] || defaultSession();
@@ -2490,7 +2763,7 @@ function App() {
       const cleanGoal = (t) => normalizeGoalFields({
         tid: typeof t.tid === "string" ? t.tid : null,
         label: typeof t.label === "string" ? t.label : "",
-        type: ["tally", "duration"].includes(t.type) ? t.type : "percent",
+        type: ["tally", "duration", "bites"].includes(t.type) ? t.type : "percent",
         timerDuration: typeof t.timerDuration === "number" ? t.timerDuration : null,
         fullGoal: t.fullGoal,
         target: t.target,
@@ -2501,6 +2774,7 @@ function App() {
         biteTarget: t.biteTarget,
         targetOf: t.targetOf,
         items: t.items,
+        oneTry: t.oneTry,
         matId: t.matId,
         matTweak: t.matTweak,
       });
@@ -2580,7 +2854,7 @@ function App() {
 
   const bcbaCopy = (selectedStudent && session.bcbaInclude && (selectedStudent.bcba || "").trim()) || "";
   const isAbsent = !!(selectedStudent && session.absent);
-  const absentLine = `Student absent${(session.absentReason || "").trim() ? ` (${session.absentReason.trim()})` : ""}`;
+  const absentLine = `${session.absentBy === "clinician" ? "Clinician absent" : "Student absent"}${(session.absentReason || "").trim() ? ` (${session.absentReason.trim()})` : ""}`;
   const makeupLine = selectedStudent && !isAbsent && session.makeupFor ? `Makeup session for ${longDate(session.makeupFor)}` : "";
 
   const matStr = (g) => { const u = usedMaterials(g, matLib); return u.length ? `Materials: ${u.join(", ")}` : ""; };
@@ -2813,6 +3087,13 @@ function App() {
               base.duration = Math.max(...g.durations);
               base.correct = g.durations.length;
             }
+            if (g.type === "bites") {
+              const foods = (g.items || []).filter(it => (it.bites || []).some(c => c !== "|"));
+              base.items = foods.map(it => ({ name: it.name, correct: longestRun(it), incorrect: 0, bites: it.bites }));
+              base.correct = foods.reduce((m, it) => Math.max(m, longestRun(it)), 0);
+              base.incorrect = 0;
+              return base;
+            }
             if ((g.items || []).length > 0) {
               const its = g.items
                 .filter(it => (it.correct || 0) + (it.incorrect || 0) > 0 || it.att)
@@ -2888,6 +3169,7 @@ function App() {
           onToggleAbsent={toggleAbsent}
           doneIds={doneIds}
           onUndoDone={undoDone}
+          onClinicianAbsent={toggleClinicianAbsent}
           onClose={() => setShowPlan(false)}
         />
       )}
@@ -2971,7 +3253,7 @@ function App() {
                 flex: 1, padding: "9px", borderRadius: 10, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 13,
                 border: `2px solid ${isAbsent ? "#ef4444" : "#e2e8f0"}`,
                 background: isAbsent ? "#ef4444" : "#fff", color: isAbsent ? "#fff" : "#64748b",
-              }}>{isAbsent ? "✓ Absent" : "🚫 Absent"}</button>
+              }}>{isAbsent ? (session.absentBy === "clinician" ? "✓ Clinician absent" : "✓ Absent") : "🚫 Absent"}</button>
               <button onClick={() => { if (!isAbsent) setMakeupOpen(v => !v); }} disabled={isAbsent} style={{
                 flex: 1, padding: "9px", borderRadius: 10, cursor: isAbsent ? "default" : "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 13,
                 border: `2px solid ${session.makeupFor && !isAbsent ? "#0ea5e9" : "#e2e8f0"}`,
@@ -2982,7 +3264,7 @@ function App() {
             {isAbsent && (
               <div style={{ background: "#fef2f2", border: "1.5px solid #fecaca", borderRadius: 10, padding: 10, marginTop: 8 }}>
                 <div style={{ fontSize: 12, color: "#b91c1c", fontWeight: 600, marginBottom: 6 }}>
-                  Marked absent today — added to makeups owed. Tap Absent again to undo.
+                  {session.absentBy === "clinician" ? "Clinician absent today" : "Marked absent today"} — added to makeups owed. Tap the button again to undo.
                 </div>
                 <input
                   value={session.absentReason || ""}
@@ -3046,7 +3328,7 @@ function App() {
                   cursor: "pointer", fontFamily: "inherit", marginBottom: 4,
                 }}>▴ collapse</button>
               )}
-              <GoalCard goal={g} index={i} onUpdate={updateGoal} onRemove={removeGoal} onSkip={skipGoal} canSkip={selectedId !== "quick"} history={pointsFor(studentHistory, g.tid)} atCriteria={goalAtCriteria(g, studentHistory)} />
+              <GoalCard goal={g} index={i} onUpdate={updateGoal} onRemove={removeGoal} onSkip={skipGoal} canSkip={selectedId !== "quick"} history={pointsFor(studentHistory, g.tid)} atCriteria={goalAtCriteria(g, studentHistory)} rawHistory={studentHistory} />
             </React.Fragment>
           )
         ))}

@@ -103,7 +103,7 @@
       if (g.points.length === 0 && !tplByTid[tid]) return;
       var tpl = tplByTid[tid] || {};
       var target = typeof tpl.target === "number" ? tpl.target : null;
-      var isPct = g.type !== "tally" && g.type !== "duration";
+      var isPct = g.type !== "tally" && g.type !== "duration" && g.type !== "bites";
       html += '<div class="goal"><h2>' + esc(g.label || ("Goal " + (gi + 1))) + "</h2>";
       if (tpl.fullGoal) html += '<div class="fullgoal">' + esc(tpl.fullGoal) + "</div>";
       if (target !== null) {
@@ -139,6 +139,9 @@
             var t2 = (it.correct || 0) + (it.incorrect || 0);
             return esc(it.name) + " " + (isPct ? (it.correct || 0) + "/" + t2 : (it.correct || 0) + "x");
           }).join(", ") + ")";
+        }
+        if (g.type === "bites") {
+          scoreTxt = "best " + p.correct + " in a row" + (p.items && p.items.length ? " (" + p.items.map(function (it) { return esc(it.name) + " " + (it.correct || 0); }).join(", ") + ")" : "");
         }
         if (g.type === "duration") {
           var dm = Math.floor((p.duration || 0) / 60), ds = (p.duration || 0) % 60;
