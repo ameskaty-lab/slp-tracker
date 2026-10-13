@@ -950,7 +950,14 @@ function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, 
             {s.name} ›
             {owedOf(s).length > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: "#0369a1", background: "#e0f2fe", borderRadius: 999, padding: "1px 7px", marginLeft: 6, whiteSpace: "nowrap", display: "inline-block" }}>🔁 {owedOf(s).length}</span>}
           </button>
-          <button onClick={() => onToggleAbsent(s.id)} style={{ ...smallBtn, ...((sessions[s.id] || {}).absent ? { background: "#ef4444", borderColor: "#ef4444", color: "#fff" } : {}) }}>{(sessions[s.id] || {}).absent ? "Absent" : "🚫"}</button>
+          {(sessions[s.id] || {}).absent ? (
+            <button onClick={() => onToggleAbsent(s.id)} style={{ ...smallBtn, background: "#ef4444", borderColor: "#ef4444", color: "#fff" }}>{(sessions[s.id] || {}).absentBy === "clinician" ? "I missed" : "Absent"}</button>
+          ) : (
+            <>
+              <button onClick={() => onToggleAbsent(s.id, "student")} title="Student absent" style={smallBtn}>🚫</button>
+              <button onClick={() => onToggleAbsent(s.id, "clinician")} title="I missed this session" style={smallBtn}>🩺</button>
+            </>
+          )}
           <button onClick={() => setTodayIds(ids => moveInList(ids, s.id, -1))} style={smallBtn}>▲</button>
           <button onClick={() => setTodayIds(ids => moveInList(ids, s.id, 1))} style={smallBtn}>▼</button>
           <button onClick={() => setPicker({ mode: "swap", id: s.id })} style={{ ...smallBtn, color: "#4f46e5", borderColor: "#c7d2fe", background: "#eef2ff" }}>Swap</button>
@@ -2688,13 +2695,13 @@ function App() {
     const goals = (st && st.goals && st.goals.length > 0) ? st.goals.map(goalFromTemplate) : [newGoal(), newGoal()];
     return { goals, reinforcers: "", parentNote: "", startedAt: null };
   };
-  const toggleAbsent = (sid) => setStore(prev => {
+  const toggleAbsent = (sid, by) => setStore(prev => {
     if (sid === "quick") return prev;
     const cur = sessionFor(prev, sid);
     let sess, roster;
     if (!cur.absent) {
       const k = todayKey();
-      sess = { ...cur, absent: true, absentDate: k, makeupFor: "" };
+      sess = { ...cur, absent: true, absentDate: k, makeupFor: "", absentBy: by === "clinician" ? "clinician" : "" };
       roster = prev.roster.map(s => (s.id === sid ? { ...s, owed: addOwedDate(owedOf(s), k) } : s));
     } else {
       sess = { ...cur, absent: false, absentDate: "", absentReason: "", absentBy: "" };
@@ -3404,17 +3411,29 @@ function App() {
         {selectedStudent && (
           <div style={{ marginBottom: 12 }}>
             <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={() => { toggleAbsent(selectedStudent.id); setMakeupOpen(false); }} style={{
-                flex: 1, padding: "9px", borderRadius: 10, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 13,
-                border: `2px solid ${isAbsent ? "#ef4444" : "#e2e8f0"}`,
-                background: isAbsent ? "#ef4444" : "#fff", color: isAbsent ? "#fff" : "#64748b",
-              }}>{isAbsent ? (session.absentBy === "clinician" ? "✓ Clinician absent" : "✓ Absent") : "🚫 Absent"}</button>
+              {isAbsent ? (
+                <button onClick={() => { toggleAbsent(selectedStudent.id); setMakeupOpen(false); }} style={{
+                  flex: 2, padding: "9px", borderRadius: 10, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 13,
+                  border: "2px solid #ef4444", background: "#ef4444", color: "#fff",
+                }}>{session.absentBy === "clinician" ? "✓ Clinician absent" : "✓ Student absent"}</button>
+              ) : (
+                <>
+                  <button onClick={() => { toggleAbsent(selectedStudent.id, "student"); setMakeupOpen(false); }} style={{
+                    flex: 1, padding: "9px 4px", borderRadius: 10, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 13,
+                    border: "2px solid #e2e8f0", background: "#fff", color: "#64748b",
+                  }}>🚫 Absent</button>
+                  <button onClick={() => { toggleAbsent(selectedStudent.id, "clinician"); setMakeupOpen(false); }} style={{
+                    flex: 1, padding: "9px 4px", borderRadius: 10, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 13,
+                    border: "2px solid #e2e8f0", background: "#fff", color: "#64748b",
+                  }}>🩺 I missed</button>
+                </>
+              )}
               <button onClick={() => { if (!isAbsent) setMakeupOpen(v => !v); }} disabled={isAbsent} style={{
                 flex: 1, padding: "9px", borderRadius: 10, cursor: isAbsent ? "default" : "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 13,
                 border: `2px solid ${session.makeupFor && !isAbsent ? "#0ea5e9" : "#e2e8f0"}`,
                 background: session.makeupFor && !isAbsent ? "#0ea5e9" : "#fff",
                 color: session.makeupFor && !isAbsent ? "#fff" : "#64748b", opacity: isAbsent ? 0.5 : 1,
-              }}>{session.makeupFor && !isAbsent ? `✓ Makeup · ${shortDate(session.makeupFor)}` : `🔁 Makeups owed: ${owedOf(selectedStudent).length}`}</button>
+              }}>{session.makeupFor && !isAbsent ? `✓ Makeup ${shortDate(session.makeupFor)}` : `🔁 Owed: ${owedOf(selectedStudent).length}`}</button>
             </div>
             {isAbsent && (
               <div style={{ background: "#fef2f2", border: "1.5px solid #fecaca", borderRadius: 10, padding: 10, marginTop: 8 }}>
