@@ -173,6 +173,75 @@ function parseGoalText(text) {
   return out;
 }
 
+// ---- Alarm that works on iPhone ----
+// Web Audio is silenced by the iPhone ring/silent switch and won't start without a tap,
+// so the alarm is an <audio> element (plays as media) that gets "unlocked" when Start is tapped.
+function makeAlarmWav() {
+  const rate = 22050, len = Math.floor(rate * 1.2);
+  const buf = new ArrayBuffer(44 + len * 2), v = new DataView(buf);
+  const w = (o, str) => { for (let i = 0; i < str.length; i++) v.setUint8(o + i, str.charCodeAt(i)); };
+  w(0, "RIFF"); v.setUint32(4, 36 + len * 2, true); w(8, "WAVE"); w(12, "fmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  w(36, "data"); v.setUint32(40, len * 2, true);
+  for (let i = 0; i < len; i++) {
+    const t = i / rate, slot = t % 0.3;
+    const on = t < 0.9 && slot < 0.18;
+    const sample = on ? Math.sin(2 * Math.PI * 1000 * t) * 0.9 * Math.min(1, (0.18 - slot) * 40, slot * 40) : 0;
+    v.setInt16(44 + i * 2, Math.round(sample * 32767), true);
+  }
+  let bin = "";
+  const bytes = new Uint8Array(buf);
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return "data:audio/wav;base64," + btoa(bin);
+}
+let alarmAudio = null;
+let wakeLock = null;
+function getAlarm() {
+  if (!alarmAudio) { try { alarmAudio = new Audio(makeAlarmWav()); alarmAudio.preload = "auto"; } catch {} }
+  return alarmAudio;
+}
+// Call from a tap (Start) so the phone allows the alarm to play later.
+function unlockAlarm() {
+  const a = getAlarm();
+  if (a) {
+    try {
+      a.muted = true;
+      const pr = a.play();
+      const done = () => { try { a.pause(); a.currentTime = 0; a.muted = false; } catch {} };
+      if (pr && pr.then) pr.then(done).catch(done); else done();
+    } catch {}
+  }
+  try { if (navigator.wakeLock && !wakeLock) navigator.wakeLock.request("screen").then(l => { wakeLock = l; l.addEventListener && l.addEventListener("release", () => { wakeLock = null; }); }).catch(() => {}); } catch {}
+}
+function ringAlarm(loop) {
+  const a = getAlarm();
+  try { window.navigator.vibrate && window.navigator.vibrate([400, 150, 400, 150, 400]); } catch {}
+  if (!a) { playBeeps(); return; }
+  try {
+    a.loop = !!loop; a.muted = false; a.currentTime = 0;
+    const pr = a.play();
+    if (pr && pr.catch) pr.catch(() => playBeeps());
+  } catch { playBeeps(); }
+  if (loop) setTimeout(() => stopAlarm(), 60000);
+}
+function stopAlarm() {
+  const a = alarmAudio;
+  try { if (a) { a.pause(); a.loop = false; a.currentTime = 0; } } catch {}
+}
+function releaseWake() {
+  try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch {}
+}
+
+// Minutes mentioned in a goal ("in 15 min", "/ 10m", "10-minute", "30-minute session").
+function goalMinutes(goal) {
+  if (goal.timerDuration) return Math.round(goal.timerDuration / 60);
+  const txt = `${goal.label || ""} ${goal.fullGoal || ""}`;
+  const m = txt.match(/(\d+)\s*-?\s*(?:minutes?|mins?\b|m\b)/i);
+  const n = m ? Number(m[1]) : 0;
+  return n > 0 && n <= 120 ? n : 0;
+}
+
 function playBeeps() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -1047,6 +1116,49 @@ function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, 
   );
 }
 
+// Big countdown for goals that say "in X minutes". The App-level checker rings the alarm.
+function GoalCountdown({ goal, onUpdate }) {
+  const mins = goalMinutes(goal);
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!goal.cdEnd) return;
+    const t = setInterval(() => setTick(x => x + 1), 500);
+    return () => clearInterval(t);
+  }, [goal.cdEnd]);
+  if (!mins) return null;
+  const total = mins * 60;
+  const running = !!goal.cdEnd;
+  const left = running ? Math.max(0, Math.ceil((goal.cdEnd - Date.now()) / 1000)) : (typeof goal.cdLeft === "number" ? goal.cdLeft : total);
+  const set = (f) => onUpdate(goal.id, (prev) => ({ ...prev, ...f }));
+  const start = () => { unlockAlarm(); set({ cdEnd: Date.now() + left * 1000, cdLeft: null, cdDone: false }); };
+  const pause = () => set({ cdEnd: null, cdLeft: left });
+  const reset = () => { stopAlarm(); set({ cdEnd: null, cdLeft: null, cdDone: false }); };
+  if (goal.cdDone) {
+    return (
+      <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+        <button onClick={() => { stopAlarm(); }} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "2px solid #f59e0b", background: "#fef3c7", color: "#92400e", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>⏰ {mins} min is up — tap to silence</button>
+        <button onClick={reset} style={{ padding: "10px 12px", borderRadius: 10, border: "1.5px solid #e2e8f0", background: "#fff", color: "#64748b", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>↺</button>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "flex", gap: 6, marginBottom: 10, alignItems: "stretch" }}>
+      <button onClick={running ? pause : start} style={{
+        flex: 1, padding: "10px", borderRadius: 10, border: "none", cursor: "pointer", fontFamily: "inherit",
+        background: running ? "#0ea5e9" : "#e0f2fe", color: running ? "#fff" : "#0369a1", fontWeight: 800, fontSize: 15,
+        display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+      }}>
+        <span>{running ? "⏸" : "▶"}</span>
+        <span style={{ fontFamily: "ui-monospace, Menlo, monospace" }}>{formatTime(left)}</span>
+        <span style={{ fontSize: 12, fontWeight: 700, opacity: 0.8 }}>{running ? "tap to pause" : left === total ? `Start ${mins} min` : "resume"}</span>
+      </button>
+      {(running || left !== total) && (
+        <button onClick={reset} style={{ padding: "10px 12px", borderRadius: 10, border: "1.5px solid #e2e8f0", background: "#fff", color: "#64748b", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>↺</button>
+      )}
+    </div>
+  );
+}
+
 // Food goals: tap a bite (Full / Partial / With help) and Break to end a run.
 function BitesPanel({ goal, onUpdate }) {
   const [adding, setAdding] = useState(false);
@@ -1210,8 +1322,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
       if (prev.timerRunning && prev.timerRemaining > 0) {
         const next = prev.timerRemaining - 1;
         if (next === 0) {
-          try { window.navigator.vibrate && window.navigator.vibrate([300, 100, 300]); } catch {}
-          playBeeps();
+          ringAlarm(false);
           return { ...prev, timerRemaining: 0, timerRunning: false, timerAlert: true };
         }
         return { ...prev, timerRemaining: next };
@@ -1312,6 +1423,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
     update({ timerDuration: sec, timerRemaining: sec, timerRunning: false, timerAlert: false });
   };
   const handleTimerToggle = () => {
+    unlockAlarm();
     if (goal.timerAlert) update({ timerAlert: false, timerRunning: false });
     else update({ timerRunning: !goal.timerRunning, timerAlert: false });
   };
@@ -1411,6 +1523,8 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
         </div>
 
         <MaterialsRow goal={goal} onUpdate={onUpdate} />
+
+        <GoalCountdown goal={goal} onUpdate={onUpdate} />
 
         <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
           {["percent", "tally", "duration", "bites"].map(t => (
@@ -2077,6 +2191,8 @@ function CompactLine({ goal, index, onTap, at, onUpdate }) {
       <span style={{ fontSize: 13, fontWeight: 600, color: "#334155", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{goal.label || "Untitled goal"}</span>
       {supTag && <span style={{ fontSize: 10, fontWeight: 700, color: "#d97706", flexShrink: 0 }}>{supTag}</span>}
       {at && <span style={{ fontSize: 12, flexShrink: 0 }}>🎯</span>}
+      {goal.cdEnd && <span style={{ fontSize: 12, flexShrink: 0 }}>⏱</span>}
+      {goal.cdDone && <span style={{ fontSize: 12, flexShrink: 0 }}>⏰</span>}
       {goal.done && <span style={{ fontSize: 11, color: "#16a34a", fontWeight: 700, flexShrink: 0 }}>✓</span>}
       <span style={{ fontSize: 13, fontWeight: 700, color: "#4f46e5", fontFamily: "ui-monospace, Menlo, monospace", flexShrink: 0 }}>{s}</span>
       {hasIt && goal.items[aiC] && !goal.oneTry && goal.type !== "bites" && (
@@ -2486,6 +2602,38 @@ function App() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
     } catch {}
   }, [store]);
+
+  // Countdown checker: any goal in any open session whose time is up rings the alarm.
+  const storeRef = useRef(store);
+  storeRef.current = store;
+  const [ringing, setRinging] = useState(null);
+  useEffect(() => {
+    const t = setInterval(() => {
+      const now = Date.now();
+      const due = [];
+      Object.entries(storeRef.current.sessions || {}).forEach(([sid, sess]) => {
+        (sess.goals || []).forEach(g => { if (g.cdEnd && g.cdEnd <= now) due.push([sid, g.id, g.label]); });
+      });
+      if (due.length === 0) return;
+      setStore(prev => {
+        const sessions = { ...prev.sessions };
+        due.forEach(([sid, gid]) => {
+          const sess = sessions[sid];
+          if (!sess) return;
+          sessions[sid] = { ...sess, goals: sess.goals.map(g => (g.id === gid ? { ...g, cdEnd: null, cdLeft: null, cdDone: true } : g)) };
+        });
+        return { ...prev, sessions };
+      });
+      const who = due.map(([sid, , label]) => {
+        const st = storeRef.current.roster.find(s => s.id === sid);
+        return `${st ? st.name + ": " : ""}${label || "Goal"}`;
+      }).join(" · ");
+      setRinging(who);
+      releaseWake();
+      ringAlarm(true);
+    }, 500);
+    return () => clearInterval(t);
+  }, []);
 
   // Update the current session; if a student is selected, keep their saved
   // goal templates in sync so revised wording auto-loads next time.
@@ -3129,6 +3277,13 @@ function App() {
 
   return (
     <MatContext.Provider value={{ lib: matLib, setLib }}>
+    {ringing && (
+      <button onClick={() => { stopAlarm(); setRinging(null); }} style={{
+        position: "fixed", top: 0, left: 0, right: 0, zIndex: 2000, padding: "16px 16px calc(16px + env(safe-area-inset-top))",
+        paddingTop: "calc(16px + env(safe-area-inset-top))", border: "none", background: "#f59e0b", color: "#fff",
+        fontWeight: 800, fontSize: 16, cursor: "pointer", fontFamily: "inherit", boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
+      }}>⏰ Time's up — {ringing}<div style={{ fontSize: 12, fontWeight: 700, opacity: 0.9, marginTop: 2 }}>Tap to silence</div></button>
+    )}
     <div style={{
       maxWidth: 480, margin: "0 auto", minHeight: "100vh",
       background: "#f8fafc",
