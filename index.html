@@ -158,6 +158,22 @@ function todayKey() {
   return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
 }
 
+// "2026-10-13" -> "Tuesday, October 13" / "Tue 10/13"
+function longDate(key) {
+  const [y, m, d] = String(key).split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+}
+function shortDate(key) {
+  const [y, m, d] = String(key).split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" });
+}
+function owedOf(s) {
+  return Array.isArray(s && s.owed) ? s.owed : [];
+}
+function addOwedDate(list, key) {
+  return list.includes(key) ? list : [...list, key].sort();
+}
+
 function buildingOf(s) {
   return ((s && s.building) || "").trim() || NO_BUILDING;
 }
@@ -638,6 +654,7 @@ function StudentPicker({ title, roster, excludeIds, selectedIds, preferBuilding,
               {g.students.map(s => (
                 <button key={s.id} onClick={() => { onPick(s.id); if (!multi) onClose(); }} style={chip(sel.has(s.id))}>
                   {multi && sel.has(s.id) ? "✓ " : ""}{s.name}
+                  {owedOf(s).length > 0 && <span style={{ fontSize: 11, color: "#0369a1", marginLeft: 5 }}>🔁{owedOf(s).length}</span>}
                 </button>
               ))}
             </div>
@@ -741,7 +758,7 @@ function DayGroups({ ids, roster, onMoveGroup, renderStudent }) {
   ));
 }
 
-function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, schedule, setDayIds, matLib, setLib, onOpenStudent, onClose }) {
+function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, schedule, setDayIds, matLib, setLib, onOpenStudent, onClose, sessions, onToggleAbsent }) {
   const [tab, setTab] = useState("today");
   const wd = new Date().getDay();
   const [day, setDay] = useState(wd >= 1 && wd <= 5 ? wd : 1);
@@ -765,7 +782,11 @@ function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, 
     return (
       <div key={s.id} style={card}>
         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-          <button onClick={() => onOpenStudent(s.id)} style={{ background: "none", border: "none", padding: 0, fontSize: 15, fontWeight: 800, color: "#1e293b", cursor: "pointer", fontFamily: "inherit", flex: 1, textAlign: "left" }}>{s.name} ›</button>
+          <button onClick={() => onOpenStudent(s.id)} style={{ background: "none", border: "none", padding: 0, fontSize: 15, fontWeight: 800, color: "#1e293b", cursor: "pointer", fontFamily: "inherit", flex: 1, textAlign: "left", minWidth: 0 }}>
+            {s.name} ›
+            {owedOf(s).length > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: "#0369a1", background: "#e0f2fe", borderRadius: 999, padding: "1px 7px", marginLeft: 6, whiteSpace: "nowrap", display: "inline-block" }}>🔁 {owedOf(s).length}</span>}
+          </button>
+          <button onClick={() => onToggleAbsent(s.id)} style={{ ...smallBtn, ...((sessions[s.id] || {}).absent ? { background: "#ef4444", borderColor: "#ef4444", color: "#fff" } : {}) }}>{(sessions[s.id] || {}).absent ? "Absent" : "🚫"}</button>
           <button onClick={() => setTodayIds(ids => moveInList(ids, s.id, -1))} style={smallBtn}>▲</button>
           <button onClick={() => setTodayIds(ids => moveInList(ids, s.id, 1))} style={smallBtn}>▼</button>
           <button onClick={() => setPicker({ mode: "swap", id: s.id })} style={{ ...smallBtn, color: "#4f46e5", borderColor: "#c7d2fe", background: "#eef2ff" }}>Swap</button>
@@ -2086,7 +2107,7 @@ function loadStore() {
         const sessions = {};
         Object.keys(parsed.sessions).forEach(k => {
           const sess = parsed.sessions[k] || {};
-          sessions[k] = { goals: (sess.goals || []).map(normalizeGoalFields), reinforcers: sess.reinforcers || "", parentNote: sess.parentNote || "", startedAt: sess.startedAt || null, bcbaInclude: !!sess.bcbaInclude };
+          sessions[k] = { goals: (sess.goals || []).map(normalizeGoalFields), reinforcers: sess.reinforcers || "", parentNote: sess.parentNote || "", startedAt: sess.startedAt || null, bcbaInclude: !!sess.bcbaInclude, absent: !!sess.absent, absentReason: sess.absentReason || "", absentDate: sess.absentDate || "", makeupFor: sess.makeupFor || "" };
         });
         return { roster, selectedId: parsed.selectedId || "quick", sessions, ...planFields(parsed) };
       }
@@ -2199,6 +2220,47 @@ function App() {
     ...prev,
     roster: prev.roster.map(s => (s.id === id ? { ...s, [field]: val } : s)),
   }));
+  // ---- Absences & makeups ----
+  // Make sure a student has a session to mark (they may not have been opened yet).
+  const sessionFor = (prev, sid) => {
+    if (prev.sessions[sid]) return prev.sessions[sid];
+    const st = prev.roster.find(s => s.id === sid);
+    const goals = (st && st.goals && st.goals.length > 0) ? st.goals.map(goalFromTemplate) : [newGoal(), newGoal()];
+    return { goals, reinforcers: "", parentNote: "", startedAt: null };
+  };
+  const toggleAbsent = (sid) => setStore(prev => {
+    if (sid === "quick") return prev;
+    const cur = sessionFor(prev, sid);
+    let sess, roster;
+    if (!cur.absent) {
+      const k = todayKey();
+      sess = { ...cur, absent: true, absentDate: k, makeupFor: "" };
+      roster = prev.roster.map(s => (s.id === sid ? { ...s, owed: addOwedDate(owedOf(s), k) } : s));
+    } else {
+      sess = { ...cur, absent: false, absentDate: "", absentReason: "" };
+      roster = prev.roster.map(s => (s.id === sid ? { ...s, owed: owedOf(s).filter(d => d !== cur.absentDate) } : s));
+    }
+    return { ...prev, roster, sessions: { ...prev.sessions, [sid]: sess } };
+  });
+  const setSessionFields = (fields) => setStore(prev => {
+    const cur = prev.sessions[prev.selectedId] || defaultSession();
+    return { ...prev, sessions: { ...prev.sessions, [prev.selectedId]: { ...cur, ...fields } } };
+  });
+  const addOwed = (key) => setStore(prev => ({
+    ...prev,
+    roster: prev.roster.map(s => (s.id === prev.selectedId ? { ...s, owed: addOwedDate(owedOf(s), key) } : s)),
+  }));
+  const removeOwed = (key) => setStore(prev => {
+    const cur = prev.sessions[prev.selectedId] || defaultSession();
+    const sessions = cur.makeupFor === key ? { ...prev.sessions, [prev.selectedId]: { ...cur, makeupFor: "" } } : prev.sessions;
+    return {
+      ...prev, sessions,
+      roster: prev.roster.map(s => (s.id === prev.selectedId ? { ...s, owed: owedOf(s).filter(d => d !== key) } : s)),
+    };
+  });
+  const [makeupOpen, setMakeupOpen] = useState(false);
+  const [newOwed, setNewOwed] = useState("");
+
   const setBcbaInclude = (val) => setStore(prev => {
     const cur = prev.sessions[prev.selectedId] || defaultSession();
     return { ...prev, sessions: { ...prev.sessions, [prev.selectedId]: { ...cur, bcbaInclude: val } } };
@@ -2328,7 +2390,7 @@ function App() {
   const shareRoster = async () => {
     const payload = JSON.stringify({
       slpRoster: 1,
-      students: roster.map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "" })),
+      students: roster.map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "", owed: owedOf(s) })),
       matLib,
       schedule: Object.fromEntries(WEEKDAYS.map(({ d }) => [d, ((store.schedule || {})[d] || []).map(id => (roster.find(s => s.id === id) || {}).name).filter(Boolean)])),
     });
@@ -2381,8 +2443,9 @@ function App() {
         const inHist = (Array.isArray(s.history) ? s.history : []).filter(h => h && typeof h.date === "string");
         const idx = newRoster.findIndex(r => r.name.trim().toLowerCase() === s.name.trim().toLowerCase());
         const inBuilding = typeof s.building === "string" ? s.building.trim() : "";
+        const inOwed = (Array.isArray(s.owed) ? s.owed : []).filter(d => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d));
         if (idx === -1) {
-          newRoster.push({ id: makeId("student"), name: s.name.trim(), goals: inGoals, history: inHist.slice(-40), building: inBuilding });
+          newRoster.push({ id: makeId("student"), name: s.name.trim(), goals: inGoals, history: inHist.slice(-40), building: inBuilding, owed: [...new Set(inOwed)].sort() });
           added++;
           newSessions += inHist.length;
           return;
@@ -2415,8 +2478,9 @@ function App() {
           .sort((a, b) => new Date(a.date) - new Date(b.date))
           .slice(-40);
         const building = (local.building || "").trim() ? local.building : inBuilding;
-        newRoster[idx] = { ...local, goals: localGoals, history, building };
-        if (extra.length > 0 || localGoals.length > beforeLen || updatedTpl || building !== (local.building || "")) merged++;
+        const owed = inOwed.reduce((l, d) => addOwedDate(l, d), owedOf(local));
+        newRoster[idx] = { ...local, goals: localGoals, history, building, owed };
+        if (extra.length > 0 || localGoals.length > beforeLen || updatedTpl || building !== (local.building || "") || owed.length !== owedOf(local).length) merged++;
         newSessions += extra.length;
       });
       // Materials sets: add any this device doesn't have yet.
@@ -2446,13 +2510,23 @@ function App() {
   };
 
   const bcbaCopy = (selectedStudent && session.bcbaInclude && (selectedStudent.bcba || "").trim()) || "";
+  const isAbsent = !!(selectedStudent && session.absent);
+  const absentLine = `Student absent${(session.absentReason || "").trim() ? ` (${session.absentReason.trim()})` : ""}`;
+  const makeupLine = selectedStudent && !isAbsent && session.makeupFor ? `Makeup session for ${longDate(session.makeupFor)}` : "";
 
   const buildSummaryHTML = () => {
     const now = new Date();
     const dateStr = now.toLocaleDateString("en-US", {
       weekday: "long", month: "long", day: "numeric", year: "numeric"
     });
+    if (isAbsent) {
+      let h = `<p><strong>${dateStr}</strong> — ${absentLine}</p>`;
+      if (parentNote.trim()) h += `<p><strong>Parent note:</strong> ${parentNote.trim()}</p>`;
+      if (bcbaCopy) h += `<p><strong>BCBA collaboration:</strong> ${bcbaCopy}</p>`;
+      return h;
+    }
     let html = `<p><strong>${dateStr}</strong></p>`;
+    if (makeupLine) html += `<p><em>${makeupLine}</em></p>`;
     goals.filter(g => !g.skipped && (goalHasData(g) || (g.notes || "").trim())).forEach((g, i) => {
       const label = g.label || `Goal ${i + 1}`;
       // Goal with a note but no data: copy just the note.
@@ -2533,7 +2607,13 @@ function App() {
     const dateStr = now.toLocaleDateString("en-US", {
       weekday: "long", month: "long", day: "numeric", year: "numeric"
     });
-    let lines = [dateStr, ""];
+    if (isAbsent) {
+      const out = [`${dateStr} — ${absentLine}`];
+      if (parentNote.trim()) out.push(`Parent note: ${parentNote.trim()}`);
+      if (bcbaCopy) out.push(`BCBA collaboration: ${bcbaCopy}`);
+      return out.join("\n");
+    }
+    let lines = makeupLine ? [dateStr, makeupLine, ""] : [dateStr, ""];
     goals.filter(g => !g.skipped && (goalHasData(g) || (g.notes || "").trim())).forEach((g, i) => {
       const label = g.label || `Goal ${i + 1}`;
       // Goal with a note but no data: copy just the note.
@@ -2633,11 +2713,12 @@ function App() {
   // For Quick mode, start completely fresh (old behavior).
   const handleNewSession = () => {
     setShowSummary(false);
+    setMakeupOpen(false);
     setStore(prev => {
       const cur = prev.sessions[prev.selectedId] || defaultSession();
       let roster = prev.roster;
       if (prev.selectedId !== "quick") {
-        const logged = cur.goals
+        const logged = cur.absent ? [] : cur.goals
           .filter(g => !g.skipped && goalHasData(g))
           .map(g => {
             const accSet = new Set(["ind", "sp", g.support || "ind", ...(g.supportOk || [])]);
@@ -2673,7 +2754,8 @@ function App() {
           const history = logged.length > 0
             ? [...(s.history || []), { date: cur.startedAt || new Date().toISOString(), goals: logged }].slice(-40)
             : (s.history || []);
-          return { ...s, history, lastParentNote: (cur.parentNote || "").trim() || s.lastParentNote || "" };
+          const owed = cur.makeupFor && !cur.absent ? owedOf(s).filter(d => d !== cur.makeupFor) : owedOf(s);
+          return { ...s, history, owed, lastParentNote: (cur.parentNote || "").trim() || s.lastParentNote || "" };
         });
       }
       const goals = prev.selectedId === "quick"
@@ -2722,6 +2804,8 @@ function App() {
           matLib={matLib}
           setLib={setLib}
           onOpenStudent={(id) => { selectStudent(id); setShowPlan(false); }}
+          sessions={sessions}
+          onToggleAbsent={toggleAbsent}
           onClose={() => setShowPlan(false)}
         />
       )}
@@ -2797,7 +2881,77 @@ function App() {
             />
           </div>
         )}
-        {goals.filter(g => !g.skipped).map((g, i) => (
+        {selectedStudent && (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => { toggleAbsent(selectedStudent.id); setMakeupOpen(false); }} style={{
+                flex: 1, padding: "9px", borderRadius: 10, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 13,
+                border: `2px solid ${isAbsent ? "#ef4444" : "#e2e8f0"}`,
+                background: isAbsent ? "#ef4444" : "#fff", color: isAbsent ? "#fff" : "#64748b",
+              }}>{isAbsent ? "✓ Absent" : "🚫 Absent"}</button>
+              <button onClick={() => { if (!isAbsent) setMakeupOpen(v => !v); }} disabled={isAbsent} style={{
+                flex: 1, padding: "9px", borderRadius: 10, cursor: isAbsent ? "default" : "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 13,
+                border: `2px solid ${session.makeupFor && !isAbsent ? "#0ea5e9" : "#e2e8f0"}`,
+                background: session.makeupFor && !isAbsent ? "#0ea5e9" : "#fff",
+                color: session.makeupFor && !isAbsent ? "#fff" : "#64748b", opacity: isAbsent ? 0.5 : 1,
+              }}>{session.makeupFor && !isAbsent ? `✓ Makeup · ${shortDate(session.makeupFor)}` : `🔁 Makeups owed: ${owedOf(selectedStudent).length}`}</button>
+            </div>
+            {isAbsent && (
+              <div style={{ background: "#fef2f2", border: "1.5px solid #fecaca", borderRadius: 10, padding: 10, marginTop: 8 }}>
+                <div style={{ fontSize: 12, color: "#b91c1c", fontWeight: 600, marginBottom: 6 }}>
+                  Marked absent today — added to makeups owed. Tap Absent again to undo.
+                </div>
+                <input
+                  value={session.absentReason || ""}
+                  onChange={e => setSessionFields({ absentReason: e.target.value })}
+                  placeholder="Reason (optional) — e.g., sick"
+                  style={{ width: "100%", borderRadius: 8, border: "1.5px solid #fecaca", padding: "8px 10px", fontFamily: "inherit", fontSize: 13, color: "#334155", outline: "none", background: "#fff", boxSizing: "border-box" }}
+                />
+              </div>
+            )}
+            {makeupOpen && !isAbsent && (
+              <div style={{ background: "#f0f9ff", border: "1.5px solid #bae6fd", borderRadius: 10, padding: 10, marginTop: 8 }}>
+                <div style={{ ...sectionLabel, color: "#0369a1", marginBottom: 6 }}>Makeups owed — tap one to make this session a makeup</div>
+                {owedOf(selectedStudent).length === 0 && <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>None owed.</div>}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                  {owedOf(selectedStudent).map(d => {
+                    const on = session.makeupFor === d;
+                    return (
+                      <span key={d} style={{
+                        display: "inline-flex", alignItems: "center", borderRadius: 999,
+                        border: `2px solid ${on ? "#0ea5e9" : "#bae6fd"}`, background: on ? "#0ea5e9" : "#fff",
+                      }}>
+                        <button onClick={() => setSessionFields({ makeupFor: on ? "" : d })} style={{
+                          background: "none", border: "none", padding: "5px 4px 5px 10px", cursor: "pointer", fontFamily: "inherit",
+                          fontSize: 13, fontWeight: 700, color: on ? "#fff" : "#0369a1",
+                        }}>{on ? "✓ " : ""}{shortDate(d)}</button>
+                        <button onClick={() => removeOwed(d)} title="Remove from owed" style={{
+                          background: "none", border: "none", padding: "5px 10px 5px 4px", cursor: "pointer",
+                          fontSize: 12, color: on ? "#e0f2fe" : "#94a3b8",
+                        }}>✕</button>
+                      </span>
+                    );
+                  })}
+                </div>
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <input type="date" value={newOwed} onChange={e => setNewOwed(e.target.value)} style={{
+                    flex: 1, borderRadius: 8, border: "1.5px solid #bae6fd", padding: "7px 8px", fontFamily: "inherit", fontSize: 13, color: "#334155", background: "#fff", minWidth: 0,
+                  }} />
+                  <button onClick={() => { if (newOwed) { addOwed(newOwed); setNewOwed(""); } }} disabled={!newOwed} style={{
+                    padding: "8px 12px", borderRadius: 8, border: "none", background: newOwed ? "#0ea5e9" : "#cbd5e1",
+                    color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap",
+                  }}>+ Add missed date</button>
+                </div>
+                {session.makeupFor && (
+                  <div style={{ fontSize: 11, color: "#0369a1", marginTop: 8 }}>
+                    This session is a makeup for {longDate(session.makeupFor)}. It comes off the list when you tap New Session.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+        {!isAbsent && goals.filter(g => !g.skipped).map((g, i) => (
           compactView && g.id !== expandedId ? (
             <CompactLine key={g.id} goal={g} index={i} at={goalAtCriteria(g, studentHistory)} onTap={() => setExpandedId(g.id)} onUpdate={updateGoal} />
           ) : (
@@ -2813,7 +2967,7 @@ function App() {
             </React.Fragment>
           )
         ))}
-        {goals.some(g => g.skipped) && (
+        {!isAbsent && goals.some(g => g.skipped) && (
           <div style={{
             background: "#f1f5f9", border: "1.5px dashed #cbd5e1", borderRadius: 12,
             padding: "10px 12px", marginBottom: 12, fontSize: 12, color: "#64748b",
@@ -2828,7 +2982,7 @@ function App() {
             ))}
           </div>
         )}
-        {goals.length < 10 && (
+        {!isAbsent && goals.length < 10 && (
           <button onClick={addGoal} style={{
             width: "100%", padding: "12px", borderRadius: 12,
             border: "2px dashed #c7d2fe", background: "#eef2ff",
@@ -2837,7 +2991,7 @@ function App() {
           }}>+ Add Goal ({goals.length}/10)</button>
         )}
 
-        <div style={{ marginBottom: 16 }}>
+        {!isAbsent && <div style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
             Reinforcers / Activities / Other
           </div>
@@ -2852,7 +3006,7 @@ function App() {
               resize: "vertical", outline: "none", background: "#fff", boxSizing: "border-box",
             }}
           />
-        </div>
+        </div>}
 
         <div style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
@@ -2921,13 +3075,19 @@ function App() {
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.5, color: "#94a3b8", textTransform: "uppercase", marginBottom: 12 }}>
             Session Summary{selectedStudent ? ` — ${selectedStudent.name}` : ""}
           </div>
-          {goals.filter(g => !g.skipped).map((g, i) => <SummaryLine key={g.id} goal={g} index={i} />)}
-          {goals.some(g => !g.skipped && goalAtCriteria(g, studentHistory)) && (
+          {isAbsent && (
+            <div style={{ fontSize: 14, color: "#fecaca", fontWeight: 700, marginBottom: 8 }}>🚫 {absentLine}</div>
+          )}
+          {makeupLine && (
+            <div style={{ fontSize: 13, color: "#7dd3fc", fontWeight: 700, marginBottom: 8 }}>🔁 {makeupLine}</div>
+          )}
+          {!isAbsent && goals.filter(g => !g.skipped).map((g, i) => <SummaryLine key={g.id} goal={g} index={i} />)}
+          {!isAbsent && goals.some(g => !g.skipped && goalAtCriteria(g, studentHistory)) && (
             <div style={{ background: "#312e81", borderRadius: 9, padding: "8px 10px", fontSize: 12, color: "#c7d2fe", marginBottom: 8 }}>
               🎯 At criteria — review: {goals.filter(g => !g.skipped && goalAtCriteria(g, studentHistory)).map((g, i) => g.label || `Goal ${i + 1}`).join("; ")} <span style={{ opacity: 0.7 }}>(screen only — not copied)</span>
             </div>
           )}
-          {reinforcers.trim() && (
+          {!isAbsent && reinforcers.trim() && (
             <div style={{ borderTop: "1px solid #334155", paddingTop: 12, marginTop: 8, fontSize: 13, color: "#94a3b8" }}>
               <span style={{ fontWeight: 700, color: "#cbd5e1" }}>Reinforcers/Activities/Other:</span> {reinforcers.trim()}
             </div>
