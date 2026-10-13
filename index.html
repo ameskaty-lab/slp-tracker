@@ -227,6 +227,21 @@ function moveGroupInList(ids, building, dir, roster) {
 
 const MatContext = React.createContext({ lib: [], setLib: () => {} });
 
+// Individual material items for a goal: the shared set's items + this student's extras,
+// split on commas / new lines.
+function materialItems(goal, lib) {
+  const set = (lib || []).find(m => m.id === goal.matId);
+  const raw = `${set ? set.items || "" : ""},${goal.matTweak || ""}`;
+  const out = [];
+  raw.split(/[,\n]/).map(x => x.trim()).filter(Boolean).forEach(x => { if (!out.some(o => o.toLowerCase() === x.toLowerCase())) out.push(x); });
+  return out;
+}
+// Checked materials, in list order, that still exist on the goal.
+function usedMaterials(goal, lib) {
+  const used = new Set((goal.matUsed || []).map(x => x.toLowerCase()));
+  return materialItems(goal, lib).filter(x => used.has(x.toLowerCase()));
+}
+
 function materialsText(goal, lib) {
   const set = (lib || []).find(m => m.id === goal.matId);
   const parts = [];
@@ -262,6 +277,7 @@ function newGoal() {
     activeItem: 0,
     matId: "",
     matTweak: "",
+    matUsed: [],
     fullGoal: "",
     target: null,
     targetOf: null,
@@ -346,6 +362,7 @@ function normalizeGoalFields(g) {
     activeItem: typeof g.activeItem === "number" ? g.activeItem : 0,
     matId: typeof g.matId === "string" ? g.matId : "",
     matTweak: typeof g.matTweak === "string" ? g.matTweak : "",
+    matUsed: Array.isArray(g.matUsed) ? g.matUsed.filter(x => typeof x === "string") : [],
     notes: typeof g.notes === "string" ? g.notes : "",
   };
 }
@@ -704,6 +721,24 @@ function MaterialsRow({ goal, onUpdate }) {
         </span>
         <span style={{ fontSize: 12, color: "#cbd5e1" }}>{open ? "▲" : "▼"}</span>
       </button>
+      {materialItems(goal, lib).length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 6, alignItems: "center" }}>
+          <span style={{ fontSize: 10, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.5 }}>Used:</span>
+          {materialItems(goal, lib).map(item => {
+            const on = (goal.matUsed || []).some(x => x.toLowerCase() === item.toLowerCase());
+            return (
+              <button key={item} onClick={() => onUpdate(goal.id, (prev) => {
+                const cur = prev.matUsed || [];
+                const has = cur.some(x => x.toLowerCase() === item.toLowerCase());
+                return { ...prev, matUsed: has ? cur.filter(x => x.toLowerCase() !== item.toLowerCase()) : [...cur, item] };
+              })} style={{
+                padding: "4px 9px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600,
+                border: `1.5px solid ${on ? "#16a34a" : "#e2e8f0"}`, background: on ? "#dcfce7" : "#fff", color: on ? "#15803d" : "#64748b",
+              }}>{on ? "☑" : "☐"} {item}</button>
+            );
+          })}
+        </div>
+      )}
       {open && (
         <div style={{ border: "1.5px solid #e2e8f0", borderTop: "none", borderRadius: "0 0 9px 9px", padding: 10, marginTop: -4, background: "#fff" }}>
           <div style={{ ...sectionLabel, marginBottom: 6 }}>Shared set</div>
@@ -1649,6 +1684,8 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, canSkip, index, history, a
 }
 
 function SummaryLine({ goal, index }) {
+  const { lib } = React.useContext(MatContext);
+  const usedMat = usedMaterials(goal, lib);
   const label = goal.label || `Goal ${index + 1}`;
   const correct = goal.correct ?? 0;
   const incorrect = goal.incorrect ?? 0;
@@ -1714,6 +1751,9 @@ function SummaryLine({ goal, index }) {
       <span style={{ color: "#cbd5e1", fontSize: 13, fontFamily: "monospace" }}>{dataStr}</span>
       {goal.notes.trim() && (
         <span style={{ color: "#94a3b8", fontSize: 13 }}>; {goal.notes.trim()}</span>
+      )}
+      {usedMat.length > 0 && (
+        <span style={{ color: "#94a3b8", fontSize: 13 }}>; Materials: {usedMat.join(", ")}</span>
       )}
     </div>
   );
@@ -2543,6 +2583,8 @@ function App() {
   const absentLine = `Student absent${(session.absentReason || "").trim() ? ` (${session.absentReason.trim()})` : ""}`;
   const makeupLine = selectedStudent && !isAbsent && session.makeupFor ? `Makeup session for ${longDate(session.makeupFor)}` : "";
 
+  const matStr = (g) => { const u = usedMaterials(g, matLib); return u.length ? `Materials: ${u.join(", ")}` : ""; };
+
   const buildSummaryHTML = () => {
     const now = new Date();
     const dateStr = now.toLocaleDateString("en-US", {
@@ -2556,11 +2598,11 @@ function App() {
     }
     let html = `<p><strong>${dateStr}</strong></p>`;
     if (makeupLine) html += `<p><em>${makeupLine}</em></p>`;
-    goals.filter(g => !g.skipped && (goalHasData(g) || (g.notes || "").trim())).forEach((g, i) => {
+    goals.filter(g => !g.skipped && (goalHasData(g) || (g.notes || "").trim() || matStr(g))).forEach((g, i) => {
       const label = g.label || `Goal ${i + 1}`;
-      // Goal with a note but no data: copy just the note.
+      // Goal with a note and/or materials but no data: copy just those.
       if (!goalHasData(g)) {
-        html += `<p>${label} — ${g.notes.trim()}</p>`;
+        html += `<p>${label} — ${[(g.notes || "").trim(), matStr(g)].filter(Boolean).join("; ")}</p>`;
         return;
       }
       const correct = g.correct ?? 0;
@@ -2617,6 +2659,7 @@ function App() {
       }
       let line = `${label} — ${dataStr}`;
       if (g.notes.trim()) line += `; ${g.notes.trim()}`;
+      if (matStr(g)) line += `; ${matStr(g)}`;
       html += `<p>${line}</p>`;
     });
     if (reinforcers.trim()) {
@@ -2643,11 +2686,11 @@ function App() {
       return out.join("\n");
     }
     let lines = makeupLine ? [dateStr, makeupLine, ""] : [dateStr, ""];
-    goals.filter(g => !g.skipped && (goalHasData(g) || (g.notes || "").trim())).forEach((g, i) => {
+    goals.filter(g => !g.skipped && (goalHasData(g) || (g.notes || "").trim() || matStr(g))).forEach((g, i) => {
       const label = g.label || `Goal ${i + 1}`;
-      // Goal with a note but no data: copy just the note.
+      // Goal with a note and/or materials but no data: copy just those.
       if (!goalHasData(g)) {
-        lines.push(`${label} — ${g.notes.trim()}`);
+        lines.push(`${label} — ${[(g.notes || "").trim(), matStr(g)].filter(Boolean).join("; ")}`);
         lines.push("");
         return;
       }
@@ -2705,6 +2748,7 @@ function App() {
       }
       let line = `${label} — ${dataStr}`;
       if (g.notes.trim()) line += `; ${g.notes.trim()}`;
+      if (matStr(g)) line += `; ${matStr(g)}`;
       lines.push(line);
       lines.push("");
     });
