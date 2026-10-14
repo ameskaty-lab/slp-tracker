@@ -3802,9 +3802,9 @@ function App() {
     runDocJob({ kind: "month", sid, docId: st.docId, list: { plain: list.plain } });
   };
 
-  const copyParentNote = async () => {
+  const copyParentNote = async (txt) => {
     try {
-      await navigator.clipboard.writeText(parentNote.trim());
+      await navigator.clipboard.writeText(typeof txt === "string" ? txt : parentNote.trim());
       setPnCopied(true);
       setTimeout(() => setPnCopied(false), 2000);
     } catch {}
@@ -4233,8 +4233,19 @@ function App() {
         </div>}
 
         <div style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
-            Parent note
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 1, flex: 1 }}>Parent note</span>
+            {(() => {
+              const txt = parentNote.trim() || (selectedStudent && selectedStudent.lastParentNote) || "";
+              if (!txt) return null;
+              return (
+                <button onClick={() => copyParentNote(txt)} style={{
+                  padding: "4px 10px", borderRadius: 999, border: "1.5px solid #c7d2fe",
+                  background: pnCopied ? "#22c55e" : "#eef2ff", color: pnCopied ? "#fff" : "#4f46e5",
+                  fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                }}>{pnCopied ? "✓ Copied!" : parentNote.trim() ? "📋 Copy" : "📋 Copy last note"}</button>
+              );
+            })()}
           </div>
           <textarea
             value={parentNote}
@@ -4323,7 +4334,7 @@ function App() {
             <div style={{ borderTop: "1px solid #334155", paddingTop: 12, marginTop: 8, fontSize: 13, color: "#94a3b8" }}>
               <span style={{ fontWeight: 700, color: "#cbd5e1" }}>Parent note:</span> {parentNote.trim()}
               <div>
-                <button onClick={copyParentNote} style={{
+                <button onClick={() => copyParentNote()} style={{
                   marginTop: 8, padding: "6px 12px", borderRadius: 8, border: "1.5px solid #475569",
                   background: pnCopied ? "#22c55e" : "transparent", color: pnCopied ? "#fff" : "#cbd5e1",
                   fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit",
