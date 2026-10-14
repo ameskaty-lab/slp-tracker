@@ -1219,6 +1219,56 @@ function GoalReview({ student, onApply, onRestore, onDeleteArchived, monthDate, 
   );
 }
 
+// Puts "Title" + tables at the top of the parent-shared monthly updates Doc (newest month on top).
+const isIdeasTable = (t) => /at home ideas/i.test((t.labels || []).join(" "));
+async function sendUpdateToDoc(docId, title, tables, token, force) {
+  const url = `https://docs.googleapis.com/v1/documents/${docId}`;
+  const paras = (doc) => ((doc.body && doc.body.content) || []).filter(el => el.paragraph).map(el => ({
+    start: el.startIndex, end: el.endIndex,
+    text: (el.paragraph.elements || []).map(e => (e.textRun && e.textRun.content) || "").join("").replace(/\n$/, ""),
+  }));
+  let doc = await gfetch(url, token);
+  if (!force && paras(doc).some(p => p.text.trim().toLowerCase() === title.trim().toLowerCase())) {
+    const e = new Error("dup"); e.code = "dup"; throw e;
+  }
+  const markers = tables.map((_, i) => `[[SLP-TABLE-${i + 1}]]`);
+  const head = title + "\n" + markers.map(m => m + "\n").join("");
+  const tEnd = 1 + title.length + 1;
+  await gfetch(url + ":batchUpdate", token, { requests: [
+    { insertText: { location: { index: 1 }, text: head } },
+    { updateParagraphStyle: { range: { startIndex: 1, endIndex: 1 + head.length }, paragraphStyle: { namedStyleType: "NORMAL_TEXT" }, fields: "namedStyleType" } },
+    { updateTextStyle: { range: { startIndex: 1, endIndex: 1 + head.length }, textStyle: { bold: false, italic: false }, fields: "bold,italic" } },
+    { updateParagraphStyle: { range: { startIndex: 1, endIndex: tEnd }, paragraphStyle: { namedStyleType: "HEADING_2" }, fields: "namedStyleType" } },
+  ] });
+  for (let i = 0; i < tables.length; i++) {
+    const t = tables[i];
+    const rows = [t.labels, ...t.rows];
+    const cols = Math.max(...rows.map(r => r.length));
+    doc = await gfetch(url, token);
+    const mp = paras(doc).find(p => p.text.trim() === markers[i]);
+    if (!mp) throw new Error("marker");
+    await gfetch(url + ":batchUpdate", token, { requests: [
+      { deleteContentRange: { range: { startIndex: mp.start, endIndex: mp.start + markers[i].length } } },
+      { insertTable: { rows: rows.length, columns: cols, location: { index: mp.start } } },
+    ] });
+    doc = await gfetch(url, token);
+    const tbl = ((doc.body && doc.body.content) || []).find(el => el.table && el.startIndex >= mp.start);
+    if (!tbl) throw new Error("table");
+    const reqs = [];
+    const cells = [];
+    tbl.table.tableRows.forEach((r, ri) => r.tableCells.forEach((c, ci) => {
+      const txt = ((rows[ri] || [])[ci] || "").trim();
+      if (txt) cells.push({ at: c.content[0].startIndex, txt, bold: ri === 0 });
+    }));
+    cells.sort((a, b) => b.at - a.at).forEach(c => {
+      reqs.push({ insertText: { location: { index: c.at }, text: c.txt } });
+      reqs.push({ updateTextStyle: { range: { startIndex: c.at, endIndex: c.at + c.txt.length }, textStyle: { bold: c.bold }, fields: "bold" } });
+    });
+    if (reqs.length) await gfetch(url + ":batchUpdate", token, { requests: reqs });
+  }
+  return { title: doc.title || "" };
+}
+
 // ---- Monthly updates ----
 // Reads the scheduled task's combined "Monthly Updates — ALL" Google Doc, splits it into one
 // update per child, and lets Katy edit and copy each one. App data is shown alongside to check.
@@ -1334,7 +1384,7 @@ function updatePlain(title, tables) {
   return out.join("\n").trim();
 }
 
-function MonthlyUpdates({ roster, monthly, setMonthly, onLoadDoc, onSetFirstName, status }) {
+function MonthlyUpdates({ roster, monthly, setMonthly, onLoadDoc, onSetFirstName, status, onSendUpdate, onLinkUpdateDoc }) {
   const now = new Date();
   const lastMonth = { y: now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear(), m: (now.getMonth() + 11) % 12 };
   const docMonth = monthOfTitle(monthly.title || ((monthly.sections || [])[0] || {}).title);
@@ -1369,7 +1419,8 @@ function MonthlyUpdates({ roster, monthly, setMonthly, onLoadDoc, onSetFirstName
     }),
   ];
 
-  const copy = async (it, tables) => {
+  const copy = async (it, allTables) => {
+    const tables = allTables.filter(t => !isIdeasTable(t));
     const html = updateHTML(it.title, tables), text = updatePlain(it.title, tables);
     try {
       if (window.ClipboardItem) {
@@ -1414,14 +1465,14 @@ function MonthlyUpdates({ roster, monthly, setMonthly, onLoadDoc, onSetFirstName
         const ad = it.student ? appMonthData(it.student, ym) : null;
         const fn = firstNameOf(it.title);
         return (
-          <div key={it.key} style={{ ...box, borderColor: copied[it.key] ? "#86efac" : "#e2e8f0" }}>
+          <div key={it.key} style={{ ...box, borderColor: copied[it.key] || (monthly.sent || {})[it.key] ? "#86efac" : "#e2e8f0" }}>
             <div onClick={() => setOpenKey(open ? null : it.key)} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
               <span style={{ fontWeight: 800, fontSize: 14, color: "#1e293b", flex: 1, minWidth: 0 }}>
                 {fn}{it.student ? <span style={{ fontWeight: 600, color: "#94a3b8", fontSize: 12 }}> · {it.student.name}</span> : <span style={{ fontWeight: 700, color: "#d97706", fontSize: 11 }}> · pick student</span>}
               </span>
               {!it.fromDoc && <span style={{ fontSize: 9, fontWeight: 800, color: "#0369a1", background: "#e0f2fe", borderRadius: 999, padding: "2px 7px" }}>FROM APP</span>}
               {edits[it.key] && <span style={{ fontSize: 9, fontWeight: 800, color: "#7c3aed", background: "#ede9fe", borderRadius: 999, padding: "2px 7px" }}>EDITED</span>}
-              {copied[it.key] && <span style={{ fontSize: 11, color: "#16a34a", fontWeight: 800 }}>✓</span>}
+              {(copied[it.key] || (monthly.sent || {})[it.key]) && <span style={{ fontSize: 11, color: "#16a34a", fontWeight: 800 }}>{(monthly.sent || {})[it.key] ? "✓ sent" : "✓"}</span>}
               <span style={{ color: "#cbd5e1", fontSize: 12 }}>{open ? "▲" : "▼"}</span>
             </div>
             {open && (
@@ -1436,7 +1487,27 @@ function MonthlyUpdates({ roster, monthly, setMonthly, onLoadDoc, onSetFirstName
                     </select>
                   </div>
                 )}
-                {tables.map((t, ti) => (
+                {tables.map((t, ti) => isIdeasTable(t) ? (() => {
+                  const atT = tables.findIndex(tt => !isIdeasTable(tt) && tt.labels.some(l => /^at home/i.test(l.trim())));
+                  const atC = atT >= 0 ? tables[atT].labels.findIndex(l => /^at home/i.test(l.trim())) : -1;
+                  const curAt = atT >= 0 ? ((tables[atT].rows[0] || [])[atC] || "") : "";
+                  return (
+                    <div key={ti} style={{ marginBottom: 8, background: "#f0fdf4", border: "1.5px solid #bbf7d0", borderRadius: 10, padding: "8px 10px" }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: "#15803d", marginBottom: 4 }}>🏠 At Home ideas — tap one to use it (not sent)</div>
+                      {t.rows.map((r, ri) => {
+                        const idea = (r[0] || "").replace(/^\s*(?:\d+[.)]|option \d+:?)\s*/i, "").trim();
+                        if (!idea) return null;
+                        const on = curAt.trim() === idea;
+                        return (
+                          <button key={ri} disabled={atT < 0} onClick={() => setTables(it.key, tables.map((tt, i2) => i2 !== atT ? tt : { ...tt, rows: tt.rows.map((rr, j) => j !== 0 ? rr : rr.map((cc, k) => k === atC ? idea : cc)) }))} style={{
+                            display: "block", width: "100%", textAlign: "left", marginBottom: 5, padding: "7px 9px", borderRadius: 8, cursor: "pointer", fontFamily: "inherit",
+                            border: `1.5px solid ${on ? "#16a34a" : "#e2e8f0"}`, background: on ? "#dcfce7" : "#fff", color: "#334155", fontSize: 12, lineHeight: 1.4,
+                          }}>{on ? "✓ " : ""}{idea}</button>
+                        );
+                      })}
+                    </div>
+                  );
+                })() : (
                   <div key={ti} style={{ marginBottom: 8 }}>
                     {t.rows.map((r, ri) => (
                       <div key={ri} style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
@@ -1469,6 +1540,19 @@ function MonthlyUpdates({ roster, monthly, setMonthly, onLoadDoc, onSetFirstName
                     ))}
                   </div>
                 )}
+                {it.student && !it.student.updateDocId && (
+                  <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                    <input placeholder={`Link to ${it.student.name}'s parent update Doc`} id={`ul-${it.key}`}
+                      style={{ flex: 1, minWidth: 0, border: "1.5px solid #e2e8f0", borderRadius: 8, padding: "7px 9px", fontSize: 12, fontFamily: "inherit", outline: "none" }} />
+                    <button onClick={() => { const el = document.getElementById(`ul-${it.key}`); const id = docIdFrom((el && el.value) || ""); if (id) onLinkUpdateDoc(it.student.id, id); }} style={small}>Link</button>
+                  </div>
+                )}
+                {it.student && it.student.updateDocId && (
+                  <button onClick={() => onSendUpdate(it, tables.filter(t => !isIdeasTable(t)), !!(monthly.sent || {})[it.key])} disabled={status && status.ok === null}
+                    style={{ width: "100%", marginBottom: 6, padding: "10px", borderRadius: 9, border: "none", background: (monthly.sent || {})[it.key] ? "#22c55e" : "#0ea5e9", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+                    {(monthly.sent || {})[it.key] ? "✓ In parent Doc" : "📄 Send to parent Doc"}
+                  </button>
+                )}
                 <div style={{ display: "flex", gap: 6 }}>
                   <button onClick={() => copy(it, tables)} style={{ flex: 1, padding: "10px", borderRadius: 9, border: "none", background: copiedKey === it.key ? "#22c55e" : "#4f46e5", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
                     {copiedKey === it.key ? "✓ Copied!" : "📋 Copy for parent"}
@@ -1486,7 +1570,7 @@ function MonthlyUpdates({ roster, monthly, setMonthly, onLoadDoc, onSetFirstName
   );
 }
 
-function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, schedule, setDayIds, matLib, setLib, onOpenStudent, onClose, sessions, onToggleAbsent, doneIds, onUndoDone, onClinicianAbsent, onApplyGoals, onRestoreGoal, onDeleteArchived, onSendMonth, initialTab, monthly, setMonthly, onLoadMonthly, onSetFirstName, monthlyStatus }) {
+function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, schedule, setDayIds, matLib, setLib, onOpenStudent, onClose, sessions, onToggleAbsent, doneIds, onUndoDone, onClinicianAbsent, onApplyGoals, onRestoreGoal, onDeleteArchived, onSendMonth, initialTab, monthly, setMonthly, onLoadMonthly, onSetFirstName, monthlyStatus, onSendUpdate, onLinkUpdateDoc }) {
   const [tab, setTab] = useState(initialTab || "today");
   const wd = new Date().getDay();
   const [day, setDay] = useState(wd >= 1 && wd <= 5 ? wd : 1);
@@ -1657,7 +1741,7 @@ function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, 
           )}
 
           {tab === "updates" && (
-            <MonthlyUpdates roster={roster} monthly={monthly || {}} setMonthly={setMonthly} onLoadDoc={onLoadMonthly} onSetFirstName={onSetFirstName} status={monthlyStatus} />
+            <MonthlyUpdates roster={roster} monthly={monthly || {}} setMonthly={setMonthly} onLoadDoc={onLoadMonthly} onSetFirstName={onSetFirstName} status={monthlyStatus} onSendUpdate={onSendUpdate} onLinkUpdateDoc={onLinkUpdateDoc} />
           )}
           {tab === "goals" && (() => {
             const md = reviewMonth();
@@ -3730,7 +3814,7 @@ function App() {
       const parsed = JSON.parse(text.slice(start, end + 1));
       // Doc links code: { slpDocLinks: 1, links: { "AmMi": { doc, building } } }
       if (parsed.slpDocLinks === 1 && parsed.links && typeof parsed.links === "object") {
-        let linked = 0, kept = 0, bset = 0;
+        let linked = 0, kept = 0, bset = 0, ulinked = 0;
         const matched = new Set();
         const newRoster = roster.map(st => {
           const nm = st.name.trim().toLowerCase();
@@ -3742,11 +3826,13 @@ function App() {
           let next = st;
           if (id) { if (st.docId && st.docId !== id) kept++; else if (!st.docId) { next = { ...next, docId: id }; linked++; } }
           if (L.building && !(st.building || "").trim()) { next = { ...next, building: String(L.building) }; bset++; }
+          const uid = docIdFrom(L.updates || "");
+          if (uid && !next.updateDocId) { next = { ...next, updateDocId: uid }; ulinked++; }
           return next;
         });
         const missing = Object.keys(parsed.links).filter(k => !matched.has(k));
         setStore(prev => ({ ...prev, roster: newRoster }));
-        return { ok: true, text: `✓ Linked ${linked} Doc${linked === 1 ? "" : "s"}${bset ? `, set ${bset} building${bset === 1 ? "" : "s"}` : ""}${kept ? ` (${kept} already had a different Doc — left as is)` : ""}${missing.length ? `. Not in your roster: ${missing.join(", ")}` : ""}` };
+        return { ok: true, text: `✓ Linked ${linked} Doc${linked === 1 ? "" : "s"}${ulinked ? `, ${ulinked} parent update Doc${ulinked === 1 ? "" : "s"}` : ""}${bset ? `, set ${bset} building${bset === 1 ? "" : "s"}` : ""}${kept ? ` (${kept} already had a different Doc — left as is)` : ""}${missing.length ? `. Not in your roster: ${missing.join(", ")}` : ""}` };
       }
       if (parsed.slpRoster !== 1 || !Array.isArray(parsed.students)) throw new Error();
       const cleanGoal = (t) => normalizeGoalFields({
@@ -4037,8 +4123,15 @@ function App() {
   const runDocJob = async (job) => {
     const token = getGToken();
     if (!token) { startGoogleSignIn(job); return; }
-    setDocStatus({ sid: job.sid, ok: null, msg: job.kind === "loadMonthly" ? "Loading updates…" : job.kind === "month" ? "Sending goal list…" : "Sending to Doc…" });
+    setDocStatus({ sid: job.sid, ok: null, msg: job.kind === "update" ? "Sending to parent Doc…" : job.kind === "loadMonthly" ? "Loading updates…" : job.kind === "month" ? "Sending goal list…" : "Sending to Doc…" });
     try {
+      if (job.kind === "update") {
+        await sendUpdateToDoc(job.docId, job.title, job.tables, token, job.force);
+        rememberGAccount();
+        setStore(prev => ({ ...prev, monthly: { ...(prev.monthly || {}), sent: { ...((prev.monthly || {}).sent || {}), [job.key]: true } } }));
+        setDocStatus({ sid: job.sid, ok: true, msg: `✓ ${job.title} added to the top of the parent Doc` });
+        return;
+      }
       if (job.kind === "loadMonthly") {
         const doc = await gfetch(`https://docs.googleapis.com/v1/documents/${job.docId}`, token);
         const sections = parseMonthlyDoc(doc);
@@ -4060,8 +4153,15 @@ function App() {
     } catch (e) {
       if (e.code === 401) { startGoogleSignIn(job); return; }
       if (e.code === 404 || e.code === 403) forgetGAccount();
-      setDocStatus({ sid: job.sid, ok: false, msg: job.kind === "loadMonthly"
-        ? (e.code === 404 || e.code === 403 ? "Couldn't open that Doc — check the link, and that it's in your herridge Google account. Tap Load to try again." : "Couldn't load the Doc — check your connection and tap Load again.")
+      if (e.code === "dup") {
+        if (window.confirm(`"${job.title}" is already in that parent Doc. Add it again anyway?`)) runDocJob({ ...job, force: true });
+        else setDocStatus({ sid: job.sid, ok: false, msg: "Not sent — that month is already in the parent Doc." });
+        return;
+      }
+      setDocStatus({ sid: job.sid, ok: false, msg: job.kind === "update" && !e.code ? "Something went wrong partway — open the parent Doc and check the top before sending again." : (job.kind === "loadMonthly" || job.kind === "update")
+        ? (e.code === 404 || e.code === 403 ? "Couldn't open that Doc — check the link, and that it's in your herridge Google account, then try again."
+          : job.kind === "update" ? `Google said no (error ${e.code}) partway through — check the top of the parent Doc before sending again.`
+          : "Couldn't load the Doc — check your connection and tap Load again.")
         : e.code === 404 || e.code === 403
         ? "Couldn't open that Doc — maybe the wrong Google account. Tap Send again to pick your herridge account (or check the Doc link in Manage Roster)."
         : e.code ? `Google said no (error ${e.code}) — your note is still here. Try again, or copy it in by hand.`
@@ -4078,7 +4178,7 @@ function App() {
     }
     if (gAuth.pending && gAuth.pending.kind) {
       if (gAuth.pending.kind === "note" && gAuth.pending.sid) selectStudent(gAuth.pending.sid);
-      if (gAuth.pending.kind === "loadMonthly") { setPlanTab("updates"); setShowPlan(true); }
+      if (gAuth.pending.kind === "loadMonthly" || gAuth.pending.kind === "update") { setPlanTab("updates"); setShowPlan(true); }
       runDocJob(gAuth.pending);
     }
   }, []);
@@ -4291,6 +4391,11 @@ function App() {
           onLoadMonthly={(docId) => runDocJob({ kind: "loadMonthly", sid: "monthly", docId })}
           onSetFirstName={(id, fn) => setStore(prev => ({ ...prev, roster: prev.roster.map(s => s.id === id ? { ...s, firstName: fn } : s) }))}
           monthlyStatus={docStatus && docStatus.sid === "monthly" ? docStatus : null}
+          onSendUpdate={(it, tables, already) => {
+            if (already && !window.confirm("This update is already in the parent Doc. Send it again?")) return;
+            runDocJob({ kind: "update", sid: "monthly", key: it.key, docId: it.student.updateDocId, title: it.title, tables, force: already });
+          }}
+          onLinkUpdateDoc={(id, docId) => setStore(prev => ({ ...prev, roster: prev.roster.map(s => s.id === id ? { ...s, updateDocId: docId } : s) }))}
           onClose={() => { setShowPlan(false); setPlanTab(null); }}
         />
       )}
