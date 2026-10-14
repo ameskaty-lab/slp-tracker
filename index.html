@@ -1219,8 +1219,275 @@ function GoalReview({ student, onApply, onRestore, onDeleteArchived, monthDate, 
   );
 }
 
-function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, schedule, setDayIds, matLib, setLib, onOpenStudent, onClose, sessions, onToggleAbsent, doneIds, onUndoDone, onClinicianAbsent, onApplyGoals, onRestoreGoal, onDeleteArchived, onSendMonth }) {
-  const [tab, setTab] = useState("today");
+// ---- Monthly updates ----
+// Reads the scheduled task's combined "Monthly Updates — ALL" Google Doc, splits it into one
+// update per child, and lets Katy edit and copy each one. App data is shown alongside to check.
+const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+function docCellText(cell) {
+  return (cell.content || []).map(el => el.paragraph ? (el.paragraph.elements || []).map(e => (e.textRun && e.textRun.content) || "").join("").replace(/\n$/, "") : "").join("\n").trim();
+}
+
+function parseMonthlyDoc(doc) {
+  const content = (doc.body && doc.body.content) || [];
+  const sections = [];
+  let building = "", cur = null;
+  content.forEach(el => {
+    if (el.paragraph) {
+      const text = (el.paragraph.elements || []).map(e => (e.textRun && e.textRun.content) || "").join("").trim();
+      const style = (el.paragraph.paragraphStyle || {}).namedStyleType || "";
+      if (!text) return;
+      if (/^HEADING_[2-6]$/.test(style) || (/^HEADING_1$/.test(style) && /update\s*$/i.test(text))) {
+        cur = { key: text, title: text, building, tables: [] };
+        sections.push(cur);
+      } else if (style === "HEADING_1" || style === "TITLE") {
+        building = text; cur = null;
+      }
+    } else if (el.table && cur) {
+      const rows = (el.table.tableRows || []).map(r => (r.tableCells || []).map(docCellText)).filter(r => r.some(c => c));
+      if (rows.length) cur.tables.push({ labels: rows[0], rows: rows.slice(1) });
+    }
+  });
+  return sections.filter(s => s.tables.length);
+}
+
+function firstNameOf(title) {
+  return String(title || "").replace(/\s+(January|February|March|April|May|June|July|August|September|October|November|December)\b.*$/i, "").trim();
+}
+
+function monthOfTitle(title) {
+  const m = String(title || "").match(/(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})/i);
+  if (!m) return null;
+  return { y: Number(m[2]), m: MONTH_NAMES.findIndex(n => n.toLowerCase() === m[1].toLowerCase()) };
+}
+
+// What the app itself logged for a student in a month.
+function appMonthData(student, ym) {
+  const entries = (student.history || []).filter(h => {
+    const d = new Date(h.date);
+    return !isNaN(d) && d.getFullYear() === ym.y && d.getMonth() === ym.m;
+  }).sort((a, b) => new Date(a.date) - new Date(b.date));
+  const days = [...new Set(entries.map(h => new Date(h.date).getDate()))];
+  const byTid = {};
+  const order = [];
+  entries.forEach(h => (h.goals || []).forEach(g => {
+    if (!byTid[g.tid]) { byTid[g.tid] = { label: g.label, type: g.type, sessions: [] }; order.push(g.tid); }
+    byTid[g.tid].label = g.label || byTid[g.tid].label;
+    byTid[g.tid].sessions.push({ date: h.date, c: g.correct || 0, i: g.incorrect || 0, dur: g.duration || 0 });
+  }));
+  const goals = order.map(tid => {
+    const g = byTid[tid];
+    const md = (d) => { const x = new Date(d); return `${x.getMonth() + 1}/${x.getDate()}`; };
+    let total, per;
+    if (g.type === "percent") {
+      const ss = g.sessions.filter(s => s.c + s.i > 0);
+      const c = ss.reduce((a, s) => a + s.c, 0), t = ss.reduce((a, s) => a + s.c + s.i, 0);
+      total = t > 0 ? `${c}/${t} — ${Math.round((c / t) * 100)}%` : "no trials";
+      per = ss.map(s => `${md(s.date)} ${s.c}/${s.c + s.i}`).join(", ");
+    } else if (g.type === "bites") {
+      total = `best ${Math.max(0, ...g.sessions.map(s => s.c))} in a row`;
+      per = g.sessions.map(s => `${md(s.date)} ${s.c}`).join(", ");
+    } else if (g.type === "duration") {
+      total = `longest ${formatTime(Math.max(0, ...g.sessions.map(s => s.dur)))}`;
+      per = g.sessions.map(s => `${md(s.date)} ${formatTime(s.dur)}`).join(", ");
+    } else {
+      total = `${g.sessions.reduce((a, s) => a + s.c, 0)}x across ${g.sessions.length} session${g.sessions.length === 1 ? "" : "s"}`;
+      per = g.sessions.map(s => `${md(s.date)} ${s.c}x`).join(", ");
+    }
+    return { label: g.label, total, per };
+  });
+  return { days, datesLine: days.length ? `${MONTH_NAMES[ym.m]} ${days.join(", ")}` : "", goals, count: entries.length };
+}
+
+function skeletonFor(student, ym) {
+  const d = appMonthData(student, ym);
+  const goals = (student.goals || []).filter(g => g.status !== "screening" && (g.fullGoal || g.label));
+  return [
+    { labels: ["Dates Seen:"], rows: [[d.datesLine]] },
+    { labels: ["Goals"], rows: [[goals.map((g, i) => `${i + 1}.  ${(g.fullGoal || g.label).trim()}`).join("\n")]] },
+    { labels: ["Progress", "At Home"], rows: [["", ""]] },
+  ];
+}
+
+function escHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+function updateHTML(title, tables) {
+  const td = 'style="border:1px solid #000;padding:5pt;vertical-align:top"';
+  let h = `<h2>${escHtml(title)}</h2>`;
+  tables.forEach(t => {
+    h += `<table style="border-collapse:collapse;width:100%"><tr>${t.labels.map(l => `<td ${td}><b>${escHtml(l)}</b></td>`).join("")}</tr>`;
+    t.rows.forEach(r => { h += `<tr>${r.map(c => `<td ${td}>${escHtml(c).replace(/\n/g, "<br>")}</td>`).join("")}</tr>`; });
+    h += `</table><br>`;
+  });
+  return h;
+}
+
+function updatePlain(title, tables) {
+  const out = [title, ""];
+  tables.forEach(t => {
+    t.labels.forEach((l, ci) => {
+      out.push(l);
+      t.rows.forEach(r => { if ((r[ci] || "").trim()) out.push(r[ci]); });
+      out.push("");
+    });
+  });
+  return out.join("\n").trim();
+}
+
+function MonthlyUpdates({ roster, monthly, setMonthly, onLoadDoc, onSetFirstName, status }) {
+  const now = new Date();
+  const lastMonth = { y: now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear(), m: (now.getMonth() + 11) % 12 };
+  const docMonth = monthOfTitle(monthly.title || ((monthly.sections || [])[0] || {}).title);
+  const [ym, setYm] = useState(docMonth || lastMonth);
+  const [link, setLink] = useState("");
+  const [openKey, setOpenKey] = useState(null);
+  const [copiedKey, setCopiedKey] = useState(null);
+  const monthLabel = `${MONTH_NAMES[ym.m]} ${ym.y}`;
+  const sections = (monthly.sections || []).filter(s => { const mo = monthOfTitle(s.title); return !mo || (mo.y === ym.y && mo.m === ym.m); });
+  const edits = monthly.edits || {};
+  const map = monthly.map || {};
+  const copied = monthly.copied || {};
+
+  const guessStudent = (title) => {
+    const fn = firstNameOf(title).toLowerCase();
+    const exact = roster.filter(s => (s.firstName || "").toLowerCase() === fn);
+    if (exact.length === 1) return exact[0].id;
+    return "";
+  };
+  const studentFor = (sec) => roster.find(s => s.id === (map[sec.key] || guessStudent(sec.title))) || null;
+  const tablesFor = (key, fallback) => edits[key] || fallback;
+  const setTables = (key, tables) => setMonthly(m => ({ ...m, edits: { ...(m.edits || {}), [key]: tables } }));
+
+  // Students with app data this month but no update in the Doc get a start-from-app-data entry.
+  const coveredIds = new Set(sections.map(s => (studentFor(s) || {}).id).filter(Boolean));
+  const appOnly = roster.filter(s => !coveredIds.has(s.id) && appMonthData(s, ym).count > 0);
+  const items = [
+    ...sections.map(sec => ({ key: sec.key, title: sec.title, building: sec.building, student: studentFor(sec), base: sec.tables, fromDoc: true })),
+    ...appOnly.map(s => {
+      const key = `app:${s.id}:${ym.y}-${ym.m}`;
+      return { key, title: `${s.firstName || s.name} ${monthLabel} Update`, building: s.building || "", student: s, base: null, fromDoc: false };
+    }),
+  ];
+
+  const copy = async (it, tables) => {
+    const html = updateHTML(it.title, tables), text = updatePlain(it.title, tables);
+    try {
+      if (window.ClipboardItem) {
+        await navigator.clipboard.write([new ClipboardItem({ "text/html": new Blob([html], { type: "text/html" }), "text/plain": new Blob([text], { type: "text/plain" }) })]);
+      } else await navigator.clipboard.writeText(text);
+    } catch { try { await navigator.clipboard.writeText(text); } catch { return; } }
+    setCopiedKey(it.key); setTimeout(() => setCopiedKey(null), 2000);
+    setMonthly(m => ({ ...m, copied: { ...(m.copied || {}), [it.key]: true } }));
+  };
+
+  const box = { background: "#fff", border: "1.5px solid #e2e8f0", borderRadius: 12, padding: "10px 12px", marginBottom: 8 };
+  const small = { padding: "5px 10px", borderRadius: 8, border: "1.5px solid #c7d2fe", background: "#eef2ff", color: "#4f46e5", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
+  const shift = (d) => setYm(p => { const t = p.y * 12 + p.m + d; return { y: Math.floor(t / 12), m: t % 12 }; });
+
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <button onClick={() => shift(-1)} style={small}>‹</button>
+        <div style={{ flex: 1, textAlign: "center", fontWeight: 800, fontSize: 16, color: "#1e293b" }}>{monthLabel}</div>
+        <button onClick={() => shift(1)} style={small}>›</button>
+      </div>
+      <div style={box}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", marginBottom: 6 }}>
+          {monthly.docId ? <>Updates Doc: <span style={{ color: "#1e293b" }}>{monthly.title || "loaded"}</span></> : "Paste the link to this month's “Monthly Updates — ALL” Doc"}
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <input value={link} onChange={e => setLink(e.target.value)} placeholder={monthly.docId ? "New Doc link (optional)" : "https://docs.google.com/document/d/..."}
+            style={{ flex: 1, minWidth: 0, border: "1.5px solid #e2e8f0", borderRadius: 8, padding: "7px 9px", fontSize: 12, fontFamily: "inherit", outline: "none" }} />
+          <button onClick={() => { const id = docIdFrom(link) || monthly.docId; if (id) onLoadDoc(id); }} style={{ ...small, background: "#4f46e5", color: "#fff", borderColor: "#4f46e5" }}>
+            {monthly.docId && !link.trim() ? "↻ Reload" : "Load"}
+          </button>
+        </div>
+        {status && <div style={{ fontSize: 12, fontWeight: 700, marginTop: 6, color: status.ok === false ? "#dc2626" : status.ok ? "#16a34a" : "#64748b" }}>{status.msg}</div>}
+        <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 6 }}>Your edits stay in the app. Reload only refreshes updates you haven't edited.</div>
+      </div>
+
+      {items.length === 0 && <div style={{ fontSize: 13, color: "#94a3b8", textAlign: "center", padding: 20 }}>No updates for {monthLabel} yet. Load the Doc, or log sessions to start from app data.</div>}
+
+      {items.map(it => {
+        const tables = tablesFor(it.key, it.base || (it.student ? skeletonFor(it.student, ym) : []));
+        const open = openKey === it.key;
+        const ad = it.student ? appMonthData(it.student, ym) : null;
+        const fn = firstNameOf(it.title);
+        return (
+          <div key={it.key} style={{ ...box, borderColor: copied[it.key] ? "#86efac" : "#e2e8f0" }}>
+            <div onClick={() => setOpenKey(open ? null : it.key)} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+              <span style={{ fontWeight: 800, fontSize: 14, color: "#1e293b", flex: 1, minWidth: 0 }}>
+                {fn}{it.student ? <span style={{ fontWeight: 600, color: "#94a3b8", fontSize: 12 }}> · {it.student.name}</span> : <span style={{ fontWeight: 700, color: "#d97706", fontSize: 11 }}> · pick student</span>}
+              </span>
+              {!it.fromDoc && <span style={{ fontSize: 9, fontWeight: 800, color: "#0369a1", background: "#e0f2fe", borderRadius: 999, padding: "2px 7px" }}>FROM APP</span>}
+              {edits[it.key] && <span style={{ fontSize: 9, fontWeight: 800, color: "#7c3aed", background: "#ede9fe", borderRadius: 999, padding: "2px 7px" }}>EDITED</span>}
+              {copied[it.key] && <span style={{ fontSize: 11, color: "#16a34a", fontWeight: 800 }}>✓</span>}
+              <span style={{ color: "#cbd5e1", fontSize: 12 }}>{open ? "▲" : "▼"}</span>
+            </div>
+            {open && (
+              <div style={{ marginTop: 10 }}>
+                {it.fromDoc && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: "#64748b" }}>Student</span>
+                    <select value={it.student ? it.student.id : ""} onChange={e => { setMonthly(m => ({ ...m, map: { ...(m.map || {}), [it.key]: e.target.value } })); if (e.target.value) onSetFirstName(e.target.value, fn); }}
+                      style={{ flex: 1, border: "1.5px solid #e2e8f0", borderRadius: 7, padding: "5px", fontSize: 12, fontFamily: "inherit" }}>
+                      <option value="">— which student is {fn}? —</option>
+                      {roster.map(s => <option key={s.id} value={s.id}>{s.name}{s.building ? ` (${s.building})` : ""}</option>)}
+                    </select>
+                  </div>
+                )}
+                {tables.map((t, ti) => (
+                  <div key={ti} style={{ marginBottom: 8 }}>
+                    {t.rows.map((r, ri) => (
+                      <div key={ri} style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
+                        {r.map((c, ci) => (
+                          <label key={ci} style={{ flex: "1 1 140px", minWidth: 0 }}>
+                            <div style={{ fontSize: 11, fontWeight: 800, color: "#4f46e5", marginBottom: 3 }}>{t.labels[ci] || ""}</div>
+                            <textarea value={c} rows={Math.min(8, Math.max(2, Math.ceil(c.length / 38) + (c.match(/\n/g) || []).length))}
+                              onChange={e => {
+                                const nt = tables.map((tt, i2) => i2 !== ti ? tt : { ...tt, rows: tt.rows.map((rr, j) => j !== ri ? rr : rr.map((cc, k) => k === ci ? e.target.value : cc)) });
+                                setTables(it.key, nt);
+                              }}
+                              style={{ width: "100%", boxSizing: "border-box", border: "1.5px solid #e2e8f0", borderRadius: 8, padding: "7px 9px", fontSize: 13, fontFamily: "inherit", color: "#334155", resize: "vertical", outline: "none", background: "#fafafa" }} />
+                          </label>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+                {ad && (
+                  <div style={{ background: "#f8fafc", border: "1.5px dashed #cbd5e1", borderRadius: 10, padding: "8px 10px", marginBottom: 8, fontSize: 12, color: "#475569" }}>
+                    <div style={{ fontWeight: 800, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", color: "#94a3b8", marginBottom: 4 }}>App data to check against — not copied</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <span><b>Dates:</b> {ad.datesLine || "no sessions logged in the app"}</span>
+                      {ad.datesLine && tables[0] && /dates/i.test(tables[0].labels[0] || "") && (tables[0].rows[0] || [])[0] !== ad.datesLine && (
+                        <button onClick={() => setTables(it.key, tables.map((tt, i2) => i2 !== 0 ? tt : { ...tt, rows: tt.rows.map((rr, j) => j !== 0 ? rr : rr.map((cc, k) => k === 0 ? ad.datesLine : cc)) }))} style={{ ...small, padding: "2px 8px", fontSize: 11 }}>use these dates</button>
+                      )}
+                    </div>
+                    {ad.goals.map((g, i) => (
+                      <div key={i} style={{ marginTop: 4 }}><b>{g.label || `Goal ${i + 1}`}:</b> {g.total}<div style={{ color: "#94a3b8", fontFamily: "ui-monospace, Menlo, monospace", fontSize: 11 }}>{g.per}</div></div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={() => copy(it, tables)} style={{ flex: 1, padding: "10px", borderRadius: 9, border: "none", background: copiedKey === it.key ? "#22c55e" : "#4f46e5", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+                    {copiedKey === it.key ? "✓ Copied!" : "📋 Copy for parent"}
+                  </button>
+                  {edits[it.key] && it.fromDoc && (
+                    <button onClick={() => setMonthly(m => { const e2 = { ...(m.edits || {}) }; delete e2[it.key]; return { ...m, edits: e2 }; })} style={{ ...small, color: "#64748b", borderColor: "#e2e8f0", background: "#fff" }}>Undo edits</button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, schedule, setDayIds, matLib, setLib, onOpenStudent, onClose, sessions, onToggleAbsent, doneIds, onUndoDone, onClinicianAbsent, onApplyGoals, onRestoreGoal, onDeleteArchived, onSendMonth, initialTab, monthly, setMonthly, onLoadMonthly, onSetFirstName, monthlyStatus }) {
+  const [tab, setTab] = useState(initialTab || "today");
   const wd = new Date().getDay();
   const [day, setDay] = useState(wd >= 1 && wd <= 5 ? wd : 1);
   const [picker, setPicker] = useState(null); // { mode: "add" | "swap" | "week", id? }
@@ -1232,7 +1499,7 @@ function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, 
     <button onClick={() => setTab(k)} style={{
       flex: 1, padding: "8px 0", borderRadius: 9, border: "none", cursor: "pointer", fontFamily: "inherit",
       background: tab === k ? "#fff" : "transparent", color: tab === k ? "#4f46e5" : "#c7d2fe",
-      fontWeight: 700, fontSize: 13,
+      fontWeight: 700, fontSize: 12,
     }}>{label}</button>
   );
   const card = { background: "#fff", border: "1.5px solid #e2e8f0", borderRadius: 12, padding: "10px 12px", marginBottom: 8 };
@@ -1321,7 +1588,7 @@ function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, 
             <button onClick={onClose} style={{ background: "rgba(255,255,255,0.2)", border: "none", color: "#fff", borderRadius: 9, padding: "6px 12px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Done</button>
           </div>
           <div style={{ display: "flex", gap: 4, background: "rgba(0,0,0,0.15)", borderRadius: 11, padding: 3 }}>
-            {tabBtn("today", "Today")}{tabBtn("week", "Week")}{tabBtn("materials", "Materials")}{tabBtn("goals", "Goals")}
+            {tabBtn("today", "Today")}{tabBtn("week", "Week")}{tabBtn("materials", "Materials")}{tabBtn("goals", "Goals")}{tabBtn("updates", "Updates")}
           </div>
         </div>
 
@@ -1389,6 +1656,9 @@ function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, 
             </>
           )}
 
+          {tab === "updates" && (
+            <MonthlyUpdates roster={roster} monthly={monthly || {}} setMonthly={setMonthly} onLoadDoc={onLoadMonthly} onSetFirstName={onSetFirstName} status={monthlyStatus} />
+          )}
           {tab === "goals" && (() => {
             const md = reviewMonth();
             const withChanges = roster.filter(s => (s.goals || []).some(g => isEnding(g) || g.status === "new"));
@@ -3029,7 +3299,8 @@ function planFields(parsed) {
   const dd = parsed.dayDone;
   const dayDone = (dd && typeof dd.date === "string" && Array.isArray(dd.ids))
     ? { date: dd.date, ids: dd.ids.filter(x => typeof x === "string") } : null;
-  return { matLib, schedule, dayOverride, dayDone };
+  const monthly = (parsed.monthly && typeof parsed.monthly === "object" && !Array.isArray(parsed.monthly)) ? parsed.monthly : {};
+  return { matLib, schedule, dayOverride, dayDone, monthly };
 }
 
 function App() {
@@ -3047,6 +3318,7 @@ function App() {
   const [compactView, setCompactView] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const [showPlan, setShowPlan] = useState(false);
+  const [planTab, setPlanTab] = useState(null);
 
   const { roster, selectedId, sessions } = store;
   const session = sessions[selectedId] || defaultSession();
@@ -3765,8 +4037,16 @@ function App() {
   const runDocJob = async (job) => {
     const token = getGToken();
     if (!token) { startGoogleSignIn(job); return; }
-    setDocStatus({ sid: job.sid, ok: null, msg: job.kind === "month" ? "Sending goal list…" : "Sending to Doc…" });
+    setDocStatus({ sid: job.sid, ok: null, msg: job.kind === "loadMonthly" ? "Loading updates…" : job.kind === "month" ? "Sending goal list…" : "Sending to Doc…" });
     try {
+      if (job.kind === "loadMonthly") {
+        const doc = await gfetch(`https://docs.googleapis.com/v1/documents/${job.docId}`, token);
+        const sections = parseMonthlyDoc(doc);
+        rememberGAccount();
+        setStore(prev => ({ ...prev, monthly: { ...(prev.monthly || {}), docId: job.docId, title: doc.title || "", sections, loadedAt: Date.now() } }));
+        setDocStatus({ sid: job.sid, ok: sections.length > 0, msg: sections.length ? `✓ Loaded ${sections.length} update${sections.length === 1 ? "" : "s"}` : "Opened the Doc, but couldn't find any “[Name] [Month] [Year] Update” sections in it." });
+        return;
+      }
       if (job.kind === "month") {
         await sendMonthListToDoc(job.docId, job.list, token);
         rememberGAccount();
@@ -3780,7 +4060,9 @@ function App() {
     } catch (e) {
       if (e.code === 401) { startGoogleSignIn(job); return; }
       if (e.code === 404 || e.code === 403) forgetGAccount();
-      setDocStatus({ sid: job.sid, ok: false, msg: e.code === 404 || e.code === 403
+      setDocStatus({ sid: job.sid, ok: false, msg: job.kind === "loadMonthly"
+        ? (e.code === 404 || e.code === 403 ? "Couldn't open that Doc — check the link, and that it's in your herridge Google account. Tap Load to try again." : "Couldn't load the Doc — check your connection and tap Load again.")
+        : e.code === 404 || e.code === 403
         ? "Couldn't open that Doc — maybe the wrong Google account. Tap Send again to pick your herridge account (or check the Doc link in Manage Roster)."
         : e.code ? `Google said no (error ${e.code}) — your note is still here. Try again, or copy it in by hand.`
         : "Couldn't reach Google — check your connection and try again. Your note is still here." });
@@ -3796,6 +4078,7 @@ function App() {
     }
     if (gAuth.pending && gAuth.pending.kind) {
       if (gAuth.pending.kind === "note" && gAuth.pending.sid) selectStudent(gAuth.pending.sid);
+      if (gAuth.pending.kind === "loadMonthly") { setPlanTab("updates"); setShowPlan(true); }
       runDocJob(gAuth.pending);
     }
   }, []);
@@ -3973,7 +4256,7 @@ function App() {
         <ConfirmModal message="This note was already sent to the Doc. Send it again?" confirmLabel="Send again" confirmColor="#4f46e5"
           onConfirm={() => { setConfirmResend(false); sendToDoc(true); }} onCancel={() => setConfirmResend(false)} />
       )}
-      {docStatus && docStatus.ok !== null && !showSummary && docStatus.sid && (
+      {docStatus && docStatus.ok !== null && !showSummary && docStatus.sid && docStatus.sid !== "monthly" && (
         <div onClick={() => setDocStatus(null)} style={{
           position: "fixed", left: 16, right: 16, bottom: "calc(84px + env(safe-area-inset-bottom))", zIndex: 1500,
           background: docStatus.ok ? "#16a34a" : "#dc2626", color: "#fff", borderRadius: 12, padding: "12px 14px",
@@ -4002,7 +4285,13 @@ function App() {
           onRestoreGoal={restoreGoal}
           onDeleteArchived={deleteArchived}
           onSendMonth={sendMonthToDoc}
-          onClose={() => setShowPlan(false)}
+          initialTab={planTab}
+          monthly={store.monthly || {}}
+          setMonthly={(fn) => setStore(prev => ({ ...prev, monthly: fn(prev.monthly || {}) }))}
+          onLoadMonthly={(docId) => runDocJob({ kind: "loadMonthly", sid: "monthly", docId })}
+          onSetFirstName={(id, fn) => setStore(prev => ({ ...prev, roster: prev.roster.map(s => s.id === id ? { ...s, firstName: fn } : s) }))}
+          monthlyStatus={docStatus && docStatus.sid === "monthly" ? docStatus : null}
+          onClose={() => { setShowPlan(false); setPlanTab(null); }}
         />
       )}
 
