@@ -61,6 +61,161 @@ const BITE_KINDS = [
   { k: "h", label: "With help", word: "with help", bg: "#3b82f6", sh: "#1d4ed8" },
 ];
 
+
+// ================= Google Docs =================
+const GOOGLE_CLIENT_ID = "507523222315-onns107c5iildda99pquau5e2lcmj0b1.apps.googleusercontent.com";
+const GOOGLE_SCOPE = "https://www.googleapis.com/auth/documents";
+const GTOKEN_KEY = "slp_gtoken";
+const GPENDING_KEY = "slp_gauth_pending";
+
+function docIdFrom(link) {
+  const m = String(link || "").match(/\/document\/d\/([a-zA-Z0-9_-]{20,})/) || String(link || "").match(/^([a-zA-Z0-9_-]{30,})$/);
+  return m ? m[1] : "";
+}
+function getGToken() {
+  try {
+    const t = JSON.parse(localStorage.getItem(GTOKEN_KEY) || "null");
+    if (t && t.token && t.exp > Date.now() + 60000) return t.token;
+  } catch {}
+  return null;
+}
+function clearGToken() { try { localStorage.removeItem(GTOKEN_KEY); } catch {} }
+// Full-page redirect sign-in (pop-ups don't work in iPhone home-screen apps).
+function startGoogleSignIn(pending) {
+  const state = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  try { localStorage.setItem(GPENDING_KEY, JSON.stringify({ state, ...(pending || {}) })); } catch {}
+  const redirect = location.origin + location.pathname;
+  const url = "https://accounts.google.com/o/oauth2/v2/auth?" + new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID, redirect_uri: redirect, response_type: "token",
+    scope: GOOGLE_SCOPE, include_granted_scopes: "true", state,
+  }).toString();
+  location.href = url;
+}
+// Called once on load: picks up the token Google sends back in the address (#access_token=...).
+function consumeGoogleRedirect() {
+  const h = location.hash || "";
+  if (!h.includes("access_token=") && !h.includes("error=")) return null;
+  const p = new URLSearchParams(h.slice(1));
+  let pending = null;
+  try { pending = JSON.parse(localStorage.getItem(GPENDING_KEY) || "null"); localStorage.removeItem(GPENDING_KEY); } catch {}
+  try { history.replaceState(null, "", location.pathname + location.search); } catch {}
+  if (p.get("error")) return { error: p.get("error"), pending };
+  if (!pending || p.get("state") !== pending.state) return { error: "state", pending: null };
+  try { localStorage.setItem(GTOKEN_KEY, JSON.stringify({ token: p.get("access_token"), exp: Date.now() + Number(p.get("expires_in") || 3600) * 1000 })); } catch {}
+  return { ok: true, pending };
+}
+async function gfetch(url, token, body) {
+  const r = await fetch(url, {
+    method: body ? "POST" : "GET",
+    headers: { Authorization: "Bearer " + token, ...(body ? { "Content-Type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (r.status === 401) { clearGToken(); const e = new Error("signin"); e.code = 401; throw e; }
+  if (!r.ok) { const e = new Error("http " + r.status); e.code = r.status; throw e; }
+  return r.json();
+}
+const MONTHS_RE = "(january|february|march|april|may|june|july|august|september|october|november|december)";
+const MONTH_HEAD = new RegExp(`^\\s*${MONTHS_RE}(\\s*(&|and)\\s*${MONTHS_RE})?\\s+\\d{4}\\b`, "i");
+function isDateLine(t) {
+  return /^\s*(mon|tue|wed|thu|fri|sat|sun)[a-z]*\b[\s,.]/i.test(t)
+    || /^\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}\b/i.test(t)
+    || /^\s*\d{1,2}\/\d{1,2}\/\d{2,4}/.test(t);
+}
+function docParagraphs(doc) {
+  const out = [];
+  ((doc.body && doc.body.content) || []).forEach(el => {
+    if (!el.paragraph) return;
+    const els = el.paragraph.elements || [];
+    const text = els.map(e => (e.textRun && e.textRun.content) || "").join("").replace(/\n$/, "");
+    const hr = els.some(e => e.horizontalRule) || /^\s*-{3,}\s*$/.test(text);
+    out.push({ start: el.startIndex, end: el.endIndex, text, hr });
+  });
+  return out;
+}
+// Where the new session note goes: above the newest dated entry under the top month;
+// if a new month block has no entries yet, at the end of that block.
+function findNoteIndex(doc) {
+  const ps = docParagraphs(doc);
+  const h = ps.findIndex(p => MONTH_HEAD.test(p.text) && !isDateLine(p.text));
+  if (h === -1) {
+    const d = ps.findIndex(p => isDateLine(p.text));
+    if (d !== -1) return ps[d].start;
+    return ps.length > 1 ? ps[1].start : 1;
+  }
+  for (let j = h + 1; j < ps.length; j++) {
+    if (isDateLine(ps[j].text) && !MONTH_HEAD.test(ps[j].text)) return ps[j].start;
+    if (MONTH_HEAD.test(ps[j].text)) {
+      const hr = ps.findIndex((p, k) => k > h && k < j && p.hr);
+      if (hr !== -1 && ps[hr + 1]) return ps[hr + 1].start;
+      return ps[j].start;
+    }
+  }
+  const last = ps[ps.length - 1];
+  return last ? last.end - 1 : 1;
+}
+// Where a new month goal list goes: right before the current top month heading.
+function findMonthIndex(doc) {
+  const ps = docParagraphs(doc);
+  const h = ps.findIndex(p => MONTH_HEAD.test(p.text) && !isDateLine(p.text));
+  if (h !== -1) return ps[h].start;
+  return ps.length > 1 ? ps[1].start : 1;
+}
+// Bold/italic ranges inside the plain note text (UTF-16 offsets, same as Docs).
+function noteStyles(text) {
+  const styles = [];
+  const lines = text.split("\n");
+  let pos = 0;
+  lines.forEach((ln, i) => {
+    const add = (a, b, st) => { if (b > a) styles.push({ a: pos + a, b: pos + b, st }); };
+    if (i === 0) { const dash = ln.indexOf(" — "); add(0, dash === -1 ? ln.length : dash, "bold"); }
+    else if (/^Goal update:|^Makeup session for/.test(ln)) add(0, ln.length, /^Makeup/.test(ln) ? "italic" : "bold");
+    else if (/^(Parent note:|BCBA collaboration:)/.test(ln)) add(0, ln.indexOf(":") + 1, "bold");
+    else if (/^Reinforcers\/Activities\/Other:/.test(ln)) add(0, ln.length, "italic");
+    pos += ln.length + 1;
+  });
+  return styles;
+}
+async function sendNoteToDoc(docId, noteText, token) {
+  const doc = await gfetch(`https://docs.googleapis.com/v1/documents/${docId}`, token);
+  const at = findNoteIndex(doc);
+  const text = noteText.trim() + "\n\n";
+  const end = at + text.length;
+  const reqs = [
+    { insertText: { location: { index: at }, text } },
+    { updateParagraphStyle: { range: { startIndex: at, endIndex: end }, paragraphStyle: { namedStyleType: "NORMAL_TEXT" }, fields: "namedStyleType" } },
+    { updateTextStyle: { range: { startIndex: at, endIndex: end }, textStyle: { bold: false, italic: false }, fields: "bold,italic" } },
+    ...noteStyles(text).map(r => ({ updateTextStyle: { range: { startIndex: at + r.a, endIndex: at + r.b }, textStyle: { [r.st]: true }, fields: r.st } })),
+  ];
+  await gfetch(`https://docs.googleapis.com/v1/documents/${docId}:batchUpdate`, token, { requests: reqs });
+  return { title: doc.title || "Doc" };
+}
+async function sendMonthListToDoc(docId, list, token) {
+  const doc = await gfetch(`https://docs.googleapis.com/v1/documents/${docId}`, token);
+  const at = findMonthIndex(doc);
+  const [title, ...items] = list.plain.split("\n");
+  const itemTexts = items.map(t => t.replace(/^\d+\.\s*/, ""));
+  const text = [title, ...itemTexts].join("\n") + "\n\n";
+  const end = at + text.length;
+  const titleEnd = at + title.length + 1;
+  const reqs = [
+    { insertText: { location: { index: at }, text } },
+    { updateTextStyle: { range: { startIndex: at, endIndex: end }, textStyle: { bold: false, italic: false }, fields: "bold,italic" } },
+    { updateParagraphStyle: { range: { startIndex: at, endIndex: end }, paragraphStyle: { namedStyleType: "NORMAL_TEXT" }, fields: "namedStyleType" } },
+    { updateParagraphStyle: { range: { startIndex: at, endIndex: titleEnd }, paragraphStyle: { namedStyleType: "HEADING_2" }, fields: "namedStyleType" } },
+  ];
+  if (itemTexts.length) {
+    reqs.push({ createParagraphBullets: { range: { startIndex: titleEnd, endIndex: titleEnd + itemTexts.join("\n").length }, bulletPreset: "NUMBERED_DECIMAL_ALPHA_ROMAN" } });
+    let pos = titleEnd;
+    itemTexts.forEach(t => {
+      if (t.startsWith("NEW: ")) reqs.push({ updateTextStyle: { range: { startIndex: pos, endIndex: pos + t.length }, textStyle: { bold: true }, fields: "bold" } });
+      const m = t.match(/ (Achieved|Updated \(see NEW\)|discontinue.*)$/);
+      if (m) reqs.push({ updateTextStyle: { range: { startIndex: pos + m.index + 1, endIndex: pos + t.length }, textStyle: { bold: true }, fields: "bold" } });
+      pos += t.length + 1;
+    });
+  }
+  await gfetch(`https://docs.googleapis.com/v1/documents/${docId}:batchUpdate`, token, { requests: reqs });
+}
+
 // ---- Goal statuses ----
 // "" = active (official), "screening" = trying out, "new" = becomes official at month-end,
 // "ending" = achieved / stepped / discontinued / not used, leaves at month-end review.
@@ -960,7 +1115,7 @@ function DayGroups({ ids, roster, onMoveGroup, renderStudent }) {
 }
 
 // Month-end review: one student's pending goal changes, apply them, copy the new month list, archive.
-function GoalReview({ student, onApply, onRestore, onDeleteArchived, monthDate }) {
+function GoalReview({ student, onApply, onRestore, onDeleteArchived, monthDate, onSendMonth }) {
   const [copied, setCopied] = useState(false);
   const [showArch, setShowArch] = useState(false);
   const [confirmDel, setConfirmDel] = useState(null);
@@ -1003,6 +1158,9 @@ function GoalReview({ student, onApply, onRestore, onDeleteArchived, monthDate }
       )}
       <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
         <button onClick={copy} style={{ flex: 1, padding: "8px", borderRadius: 9, border: "1.5px solid #c7d2fe", background: copied ? "#dcfce7" : "#eef2ff", color: copied ? "#15803d" : "#4f46e5", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{copied ? "✓ Copied" : `Copy ${monthLabelFor(monthDate)} goal list`}</button>
+        {list.count > 0 && (
+          <button onClick={() => onSendMonth(student.id, list)} style={{ flex: 1, padding: "8px", borderRadius: 9, border: "1.5px solid #bae6fd", background: "#f0f9ff", color: "#0369a1", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>📄 {student.docId ? "Send to Doc" : "Link Doc"}</button>
+        )}
         {pending > 0 && (
           <button onClick={() => onApply(student.id)} style={{ flex: 1, padding: "8px", borderRadius: 9, border: "none", background: "#4f46e5", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Apply changes</button>
         )}
@@ -1028,7 +1186,7 @@ function GoalReview({ student, onApply, onRestore, onDeleteArchived, monthDate }
   );
 }
 
-function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, schedule, setDayIds, matLib, setLib, onOpenStudent, onClose, sessions, onToggleAbsent, doneIds, onUndoDone, onClinicianAbsent, onApplyGoals, onRestoreGoal, onDeleteArchived }) {
+function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, schedule, setDayIds, matLib, setLib, onOpenStudent, onClose, sessions, onToggleAbsent, doneIds, onUndoDone, onClinicianAbsent, onApplyGoals, onRestoreGoal, onDeleteArchived, onSendMonth }) {
   const [tab, setTab] = useState("today");
   const wd = new Date().getDay();
   const [day, setDay] = useState(wd >= 1 && wd <= 5 ? wd : 1);
@@ -1209,9 +1367,9 @@ function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, 
                   Goal changes you made this month. "Copy" gives you the {monthLabelFor(md)} goal list for the Doc; "Apply" archives finished goals and makes NEW goals official.
                 </div>
                 {roster.length === 0 && <div style={{ fontSize: 13, color: "#94a3b8" }}>No students yet.</div>}
-                {withChanges.map(s => <GoalReview key={s.id} student={s} monthDate={md} onApply={onApplyGoals} onRestore={onRestoreGoal} onDeleteArchived={onDeleteArchived} />)}
+                {withChanges.map(s => <GoalReview key={s.id} student={s} monthDate={md} onApply={onApplyGoals} onRestore={onRestoreGoal} onDeleteArchived={onDeleteArchived} onSendMonth={onSendMonth} />)}
                 {others.length > 0 && <div style={{ ...sectionLabel, margin: "14px 0 6px" }}>No changes this month</div>}
-                {others.map(s => <GoalReview key={s.id} student={s} monthDate={md} onApply={onApplyGoals} onRestore={onRestoreGoal} onDeleteArchived={onDeleteArchived} />)}
+                {others.map(s => <GoalReview key={s.id} student={s} monthDate={md} onApply={onApplyGoals} onRestore={onRestoreGoal} onDeleteArchived={onDeleteArchived} onSendMonth={onSendMonth} />)}
               </>
             );
           })()}
@@ -2581,7 +2739,7 @@ function StudentBar({ roster, todayStudents, doneStudents, selectedId, onSelect,
   );
 }
 
-function RosterPanel({ roster, onRename, onDelete, onMove, onShare, onImport, onClose, shareStatus, onSetBuilding }) {
+function RosterPanel({ roster, onRename, onDelete, onMove, onShare, onImport, onClose, shareStatus, onSetBuilding, onLinkDoc }) {
   const [importText, setImportText] = useState("");
   const [placing, setPlacing] = useState(null);
   const [importMsg, setImportMsg] = useState(null);
@@ -2654,6 +2812,12 @@ function RosterPanel({ roster, onRename, onDelete, onMove, onShare, onImport, on
               background: (s.building || "").trim() ? "#eef2ff" : "#fffbeb",
               color: (s.building || "").trim() ? "#4f46e5" : "#b45309",
             }}>📍 {(s.building || "").trim() || "set building"}</button>
+            <button onClick={() => onLinkDoc(s.id)} style={{
+              marginTop: 2, marginLeft: 4, padding: "1px 8px", borderRadius: 999, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+              border: s.docId ? "1.5px solid #bae6fd" : "1.5px dashed #cbd5e1",
+              background: s.docId ? "#f0f9ff" : "#fff",
+              color: s.docId ? "#0369a1" : "#94a3b8",
+            }}>📄 {s.docId ? "Doc linked" : "link Doc"}</button>
           </div>
           <span style={{ fontSize: 11, color: "#94a3b8" }}>{(s.goals || []).length} goal{(s.goals || []).length === 1 ? "" : "s"}</span>
           <button onClick={() => onMove(s.id, -1)} style={{
@@ -2783,6 +2947,10 @@ function planFields(parsed) {
 
 function App() {
   const [store, setStore] = useState(loadStore);
+  const [gAuth] = useState(() => consumeGoogleRedirect());
+  const [docStatus, setDocStatus] = useState(null); // { sid, ok, msg }
+  const [linkingDoc, setLinkingDoc] = useState(null); // { sid, then }
+  const [confirmResend, setConfirmResend] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showRoster, setShowRoster] = useState(false);
@@ -3171,7 +3339,7 @@ function App() {
   const shareRoster = async () => {
     const payload = JSON.stringify({
       slpRoster: 1,
-      students: roster.map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "", owed: owedOf(s), archived: s.archived || [] })),
+      students: roster.map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "", owed: owedOf(s), archived: s.archived || [], docId: s.docId || "" })),
       matLib,
       schedule: Object.fromEntries(WEEKDAYS.map(({ d }) => [d, ((store.schedule || {})[d] || []).map(id => (roster.find(s => s.id === id) || {}).name).filter(Boolean)])),
     });
@@ -3228,7 +3396,7 @@ function App() {
         const inBuilding = typeof s.building === "string" ? s.building.trim() : "";
         const inOwed = (Array.isArray(s.owed) ? s.owed : []).filter(d => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d));
         if (idx === -1) {
-          newRoster.push({ id: makeId("student"), name: s.name.trim(), goals: inGoals, history: inHist.slice(-40), building: inBuilding, owed: [...new Set(inOwed)].sort(), archived: (Array.isArray(s.archived) ? s.archived : []).filter(a => a && typeof a.tid === "string") });
+          newRoster.push({ id: makeId("student"), name: s.name.trim(), goals: inGoals, history: inHist.slice(-40), building: inBuilding, owed: [...new Set(inOwed)].sort(), docId: typeof s.docId === "string" ? s.docId : "", archived: (Array.isArray(s.archived) ? s.archived : []).filter(a => a && typeof a.tid === "string") });
           added++;
           newSessions += inHist.length;
           return;
@@ -3265,7 +3433,8 @@ function App() {
         const inArch = (Array.isArray(s.archived) ? s.archived : []).filter(a => a && typeof a.tid === "string");
         const archived = [...(local.archived || [])];
         inArch.forEach(a => { if (!archived.some(x => x.tid === a.tid)) archived.push(a); });
-        newRoster[idx] = { ...local, goals: localGoals, history, building, owed, archived };
+        const docId = local.docId || (typeof s.docId === "string" ? s.docId : "");
+        newRoster[idx] = { ...local, goals: localGoals, history, building, owed, archived, docId };
         if (extra.length > 0 || localGoals.length > beforeLen || updatedTpl || building !== (local.building || "") || owed.length !== owedOf(local).length) merged++;
         newSessions += extra.length;
       });
@@ -3477,6 +3646,53 @@ function App() {
     return lines.join("\n").trim();
   };
 
+  // ---- Send to Google Doc ----
+  const markSent = (sid) => setStore(prev => (prev.sessions[sid] ? { ...prev, sessions: { ...prev.sessions, [sid]: { ...prev.sessions[sid], sentToDoc: true } } } : prev));
+  const runDocJob = async (job) => {
+    const token = getGToken();
+    if (!token) { startGoogleSignIn(job); return; }
+    setDocStatus({ sid: job.sid, ok: null, msg: job.kind === "month" ? "Sending goal list…" : "Sending to Doc…" });
+    try {
+      if (job.kind === "month") {
+        await sendMonthListToDoc(job.docId, job.list, token);
+        setDocStatus({ sid: job.sid, ok: true, msg: "✓ Goal list added to the Doc" });
+      } else {
+        const r = await sendNoteToDoc(job.docId, job.text, token);
+        markSent(job.sid);
+        setDocStatus({ sid: job.sid, ok: true, msg: `✓ Added to "${r.title}"` });
+      }
+    } catch (e) {
+      if (e.code === 401) { startGoogleSignIn(job); return; }
+      setDocStatus({ sid: job.sid, ok: false, msg: e.code === 404 || e.code === 403
+        ? "Couldn't open that Doc. Check its link in Manage Roster (and that it's in your herridge Google account)."
+        : "Couldn't reach Google — check your connection and try again. Your note is still here." });
+    }
+  };
+  // After coming back from Google sign-in, finish what was started.
+  useEffect(() => {
+    if (!gAuth) return;
+    if (gAuth.error) {
+      setDocStatus({ sid: gAuth.pending && gAuth.pending.sid, ok: false, msg: gAuth.error === "access_denied" ? "Google sign-in was cancelled." : "Google sign-in didn't finish. Try Send to Doc again." });
+      return;
+    }
+    if (gAuth.pending && gAuth.pending.kind) {
+      if (gAuth.pending.kind === "note" && gAuth.pending.sid) selectStudent(gAuth.pending.sid);
+      runDocJob(gAuth.pending);
+    }
+  }, []);
+  const sendToDoc = (force) => {
+    if (!selectedStudent) return;
+    if (!selectedStudent.docId) { setLinkingDoc({ sid: selectedStudent.id, then: "note" }); return; }
+    if (session.sentToDoc && !force) { setConfirmResend(true); return; }
+    runDocJob({ kind: "note", sid: selectedStudent.id, docId: selectedStudent.docId, text: buildSummaryPlainText() });
+  };
+  const sendMonthToDoc = (sid, list) => {
+    const st = roster.find(s => s.id === sid);
+    if (!st) return;
+    if (!st.docId) { setLinkingDoc({ sid, then: null }); return; }
+    runDocJob({ kind: "month", sid, docId: st.docId, list: { plain: list.plain } });
+  };
+
   const handleCopy = async () => {
     const html = buildSummaryHTML();
     const text = buildSummaryPlainText();
@@ -3506,6 +3722,7 @@ function App() {
   const handleNewSession = () => {
     setShowSummary(false);
     setMakeupOpen(false);
+    setDocStatus(null);
     try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
     setStore(prev => {
       const cur = prev.sessions[prev.selectedId] || defaultSession();
@@ -3607,6 +3824,36 @@ function App() {
         />
       )}
 
+      {linkingDoc && (
+        <TextModal
+          title={`Google Doc for ${(roster.find(s => s.id === linkingDoc.sid) || {}).name || "student"}`}
+          confirmLabel={linkingDoc.then ? "Save & send" : "Save"}
+          fields={[{ label: "Paste the Doc's link (from Share → Copy link, or the address bar)", placeholder: "https://docs.google.com/document/d/...", initial: ((roster.find(s => s.id === linkingDoc.sid) || {}).docId ? `https://docs.google.com/document/d/${roster.find(s => s.id === linkingDoc.sid).docId}/edit` : "") }]}
+          onSubmit={([link]) => {
+            const id = docIdFrom(link);
+            if (!id) { setDocStatus({ sid: linkingDoc.sid, ok: false, msg: "That doesn't look like a Google Doc link. Open the Doc and copy its address." }); setLinkingDoc(null); return; }
+            setStudentField(linkingDoc.sid, "docId", id);
+            const then = linkingDoc.then;
+            setLinkingDoc(null);
+            if (then === "note" && selectedStudent && selectedStudent.id === linkingDoc.sid) {
+              runDocJob({ kind: "note", sid: selectedStudent.id, docId: id, text: buildSummaryPlainText() });
+            }
+          }}
+          onCancel={() => setLinkingDoc(null)}
+        />
+      )}
+      {confirmResend && (
+        <ConfirmModal message="This note was already sent to the Doc. Send it again?" confirmLabel="Send again" confirmColor="#4f46e5"
+          onConfirm={() => { setConfirmResend(false); sendToDoc(true); }} onCancel={() => setConfirmResend(false)} />
+      )}
+      {docStatus && docStatus.ok !== null && !showSummary && docStatus.sid && (
+        <div onClick={() => setDocStatus(null)} style={{
+          position: "fixed", left: 16, right: 16, bottom: "calc(84px + env(safe-area-inset-bottom))", zIndex: 1500,
+          background: docStatus.ok ? "#16a34a" : "#dc2626", color: "#fff", borderRadius: 12, padding: "12px 14px",
+          fontSize: 13, fontWeight: 700, boxShadow: "0 6px 20px rgba(0,0,0,0.2)", maxWidth: 448, margin: "0 auto", cursor: "pointer",
+        }}>{docStatus.msg} <span style={{ opacity: 0.8, fontWeight: 600 }}>· tap to close</span></div>
+      )}
+
       {showPlan && (
         <PlanPanel
           roster={roster}
@@ -3627,6 +3874,7 @@ function App() {
           onApplyGoals={applyGoalChanges}
           onRestoreGoal={restoreGoal}
           onDeleteArchived={deleteArchived}
+          onSendMonth={sendMonthToDoc}
           onClose={() => setShowPlan(false)}
         />
       )}
@@ -3681,6 +3929,7 @@ function App() {
           onClose={() => setShowRoster(false)}
           shareStatus={shareStatus}
           onSetBuilding={(id, b) => setStudentField(id, "building", b)}
+          onLinkDoc={(id) => setLinkingDoc({ sid: id, then: null })}
         />
       )}
 
@@ -3963,13 +4212,23 @@ function App() {
               <span style={{ fontWeight: 700, color: "#cbd5e1" }}>BCBA collaboration:</span> {bcbaCopy}
             </div>
           )}
+          {docStatus && selectedStudent && docStatus.sid === selectedStudent.id && docStatus.ok !== null && (
+            <div style={{ marginTop: 12, fontSize: 12, fontWeight: 700, color: docStatus.ok ? "#86efac" : "#fca5a5" }}>{docStatus.msg}</div>
+          )}
           <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
             <button onClick={handleCopy} style={{
               flex: 1, padding: "10px", borderRadius: 9, border: "none",
               background: copied ? "#22c55e" : "#4f46e5",
               color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer",
               fontFamily: "inherit", transition: "background 0.2s",
-            }}>{copied ? "✓ Copied!" : "Copy to Clipboard"}</button>
+            }}>{copied ? "✓ Copied!" : "Copy"}</button>
+            {selectedStudent && (
+              <button onClick={() => sendToDoc(false)} disabled={docStatus && docStatus.ok === null} style={{
+                flex: 1, padding: "10px", borderRadius: 9, border: "none",
+                background: session.sentToDoc ? "#22c55e" : "#0ea5e9",
+                color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit",
+              }}>{docStatus && docStatus.ok === null && docStatus.sid === selectedStudent.id ? "Sending…" : session.sentToDoc ? "✓ In Doc" : selectedStudent.docId ? "📄 Send to Doc" : "📄 Link Doc"}</button>
+            )}
             <button onClick={handleNewSession} style={{
               padding: "10px 14px", borderRadius: 9, border: "1.5px solid #475569",
               background: "transparent", color: "#94a3b8", fontWeight: 700,

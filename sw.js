@@ -1,4 +1,4 @@
-const CACHE_NAME = "slp-tracker-v29";
+const CACHE_NAME = "slp-tracker-v30";
 const URLS_TO_CACHE = [
   "./",
   "./index.html",
@@ -38,6 +38,11 @@ self.addEventListener("activate", (event) => {
 
 // Serve from cache first, fall back to network, and update cache in background
 self.addEventListener("fetch", (event) => {
+  // Only cache the app's own files (and the unpkg fallbacks). Google sign-in and Docs
+  // requests must always go straight to the network, never from cache.
+  const url = new URL(event.request.url);
+  if (event.request.method !== "GET") return;
+  if (url.origin !== self.location.origin && url.hostname !== "unpkg.com") return;
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       const networkFetch = fetch(event.request)
