@@ -1688,7 +1688,7 @@ function TextModal({ title, fields, confirmLabel, confirmColor, onSubmit, onCanc
   );
 }
 
-function GoalCard({ goal, onUpdate, onRemove, onSkip, onChange, canSkip, index, history, atCriteria, rawHistory }) {
+function GoalCard({ goal, onUpdate, onRemove, onSkip, onChange, canSkip, index, history, atCriteria, rawHistory, missed }) {
   const intervalRef = useRef(null);
   const [confirm, setConfirm] = useState(null);
   const [timerOpen, setTimerOpen] = useState(false);
@@ -1910,8 +1910,8 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, onChange, canSkip, index, 
         />
       )}
       <div style={{
-        background: goal.done ? "#f1f5f9" : timerAlert ? "#fff3cd" : "#ffffff",
-        border: `2px solid ${goal.done ? "#cbd5e1" : timerAlert ? "#f59e0b" : "#e2e8f0"}`,
+        background: goal.done ? "#f1f5f9" : timerAlert ? "#fff3cd" : missed ? "#fffbeb" : "#ffffff",
+        border: `2px solid ${goal.done ? "#cbd5e1" : timerAlert ? "#f59e0b" : missed ? "#fbbf24" : "#e2e8f0"}`,
         borderRadius: 16,
         padding: "16px",
         marginBottom: 12,
@@ -1928,6 +1928,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, onChange, canSkip, index, 
           {atCriteria && <span title="At criteria — review">🎯</span>}
           {goal.status === "screening" && <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.5, color: "#b45309", background: "#fef3c7", borderRadius: 999, padding: "2px 7px", flexShrink: 0 }}>SCREENING</span>}
           {goal.status === "new" && <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.5, color: "#15803d", background: "#dcfce7", borderRadius: 999, padding: "2px 7px", flexShrink: 0 }}>NEW</span>}
+          {missed && <span title="Not worked on last session" style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.5, color: "#b45309", background: "#fef3c7", borderRadius: 999, padding: "2px 7px", flexShrink: 0 }}>MISSED LAST</span>}
           <input
             value={goal.label}
             onChange={e => update({ label: e.target.value })}
@@ -2578,7 +2579,7 @@ function applyTap(goal, field, delta, onUpdate) {
   }
 }
 
-function CompactLine({ goal, index, onTap, at, onUpdate }) {
+function CompactLine({ goal, index, onTap, at, onUpdate, missed }) {
   const [itemMenu, setItemMenu] = useState(false);
   let s;
   const hasIt = (goal.items || []).length > 0;
@@ -2610,7 +2611,7 @@ function CompactLine({ goal, index, onTap, at, onUpdate }) {
   const supTag = (goal.usedSupport || "ind") !== "ind" ? goal.usedSupport : "";
   return (
     <div onClick={onTap} style={{
-      background: goal.done ? "#f1f5f9" : "#fff", border: "1.5px solid #e2e8f0", borderRadius: 10,
+      background: goal.done ? "#f1f5f9" : missed ? "#fffbeb" : "#fff", border: `1.5px solid ${missed && !goal.done ? "#fbbf24" : "#e2e8f0"}`, borderRadius: 10,
       padding: "9px 12px", marginBottom: 6, display: "flex", alignItems: "center", gap: 8,
       cursor: "pointer", opacity: goal.done ? 0.7 : 1,
     }}>
@@ -2620,6 +2621,7 @@ function CompactLine({ goal, index, onTap, at, onUpdate }) {
       {at && <span style={{ fontSize: 12, flexShrink: 0 }}>🎯</span>}
       {goal.status === "screening" && <span style={{ fontSize: 9, fontWeight: 800, color: "#b45309", flexShrink: 0 }}>SCR</span>}
       {goal.status === "new" && <span style={{ fontSize: 9, fontWeight: 800, color: "#15803d", flexShrink: 0 }}>NEW</span>}
+      {missed && !goal.done && <span title="Not worked on last session" style={{ fontSize: 9, fontWeight: 800, color: "#b45309", flexShrink: 0 }}>MISSED</span>}
 
       {goal.done && <span style={{ fontSize: 11, color: "#16a34a", fontWeight: 700, flexShrink: 0 }}>✓</span>}
       <span style={{ fontSize: 13, fontWeight: 700, color: "#4f46e5", fontFamily: "ui-monospace, Menlo, monospace", flexShrink: 0 }}>{s}</span>
@@ -3044,6 +3046,8 @@ function App() {
   const [pnCopied, setPnCopied] = useState(false);
   const selectedStudent = roster.find(s => s.id === selectedId) || null;
   const studentHistory = selectedStudent ? (selectedStudent.history || []) : [];
+  const lastLoggedTids = new Set(((studentHistory[studentHistory.length - 1] || {}).goals || []).map(x => x.tid));
+  const missedLast = (g) => !!selectedStudent && studentHistory.length > 0 && !lastLoggedTids.has(g.tid) && !goalHasData(g);
 
   useEffect(() => {
     try {
@@ -4149,7 +4153,7 @@ function App() {
         )}
         {!isAbsent && goals.filter(g => !g.skipped && !isEnding(g)).map((g, i) => (
           compactView && g.id !== expandedId ? (
-            <CompactLine key={g.id} goal={g} index={i} at={goalAtCriteria(g, studentHistory)} onTap={() => setExpandedId(g.id)} onUpdate={updateGoal} />
+            <CompactLine key={g.id} goal={g} index={i} at={goalAtCriteria(g, studentHistory)} missed={missedLast(g)} onTap={() => setExpandedId(g.id)} onUpdate={updateGoal} />
           ) : (
             <React.Fragment key={g.id}>
               {compactView && (
@@ -4159,7 +4163,7 @@ function App() {
                   cursor: "pointer", fontFamily: "inherit", marginBottom: 4,
                 }}>▴ collapse</button>
               )}
-              <GoalCard goal={g} index={i} onUpdate={updateGoal} onRemove={removeGoal} onSkip={skipGoal} onChange={changeGoal} canSkip={selectedId !== "quick"} history={pointsFor(studentHistory, g.tid)} atCriteria={goalAtCriteria(g, studentHistory)} rawHistory={studentHistory} />
+              <GoalCard goal={g} index={i} onUpdate={updateGoal} onRemove={removeGoal} onSkip={skipGoal} onChange={changeGoal} canSkip={selectedId !== "quick"} history={pointsFor(studentHistory, g.tid)} atCriteria={goalAtCriteria(g, studentHistory)} rawHistory={studentHistory} missed={missedLast(g)} />
             </React.Fragment>
           )
         ))}
