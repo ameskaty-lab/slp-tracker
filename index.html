@@ -297,6 +297,11 @@ function oneTrySummary(g) {
   return `${c}/${tried.length} — ${Math.round((c / tried.length) * 100)}%${missed.length ? `; missed: ${missed.join(", ")}` : ""}`;
 }
 
+const SUPPORT_NAMES = { ind: "independent", sp: "spontaneous", f: "phonemic cue", p: "physical prompt", oh: "open hand", s: "visual support", r: "verbal prompt", g: "gestural cue", m: "model", im: "indirect model", k: "kinesthetic cue" };
+const helpStr = (g) => [
+  (g.helped || "").trim() ? `benefitted from ${g.helped.trim()}` : "",
+  (g.notHelped || "").trim() ? `didn't benefit from ${g.notHelped.trim()}` : "",
+].filter(Boolean).join("; ");
 const SUPPORT_CODES = ["ind", "sp", "f", "p", "oh", "s", "r", "g", "m", "im", "k", "m+d", "1m", "2m", "3m"];
 
 function formatTime(s) {
@@ -356,7 +361,8 @@ function parseGoalText(text) {
     [/phonemic/, "f"],
     [/kinesthetic/, "k"],
   ];
-  for (const [re2, code] of sup) { if (re2.test(t)) { out.support = code; break; } }
+  const tSup = t.replace(/without (?:a |an |any )?(?:[a-z]+ ){0,2}(?:models?|prompts?|prompting|cues?|support)/g, " ");
+  for (const [re2, code] of sup) { if (re2.test(tSup)) { out.support = code; break; } }
   if (/\bbites?\b|\bbiting\b|bite through|bite into/.test(t)) {
     out.type = "bites";
   }
@@ -580,6 +586,9 @@ function newGoal() {
     incorrect: 0,
     durations: [],
     notes: "",
+    helped: "",
+    notHelped: "",
+    higher: "",
     skipped: false,
     done: false,
     support: "ind",
@@ -626,6 +635,7 @@ function goalFromTemplate(t) {
     support: typeof t.support === "string" && t.support ? t.support : "ind",
     usedSupport: typeof t.support === "string" && t.support ? t.support : "ind",
     supportOk: Array.isArray(t.supportOk) ? t.supportOk : [],
+    supportSet: !!t.supportSet,
     biteTarget: typeof t.biteTarget === "number" ? t.biteTarget : 0,
     items: (t.items || []).map(it => ({ name: typeof it === "string" ? it : String((it && it.name) || ""), correct: 0, incorrect: 0, att: false, bites: [] })),
     oneTry: !!t.oneTry,
@@ -635,6 +645,13 @@ function goalFromTemplate(t) {
     matId: typeof t.matId === "string" ? t.matId : "",
     matTweak: typeof t.matTweak === "string" ? t.matTweak : "",
   };
+}
+
+function autoSupport(g) {
+  if (g.supportSet || !g.fullGoal) return g;
+  const sp = parseGoalText(g.fullGoal).support;
+  if (sp && (g.support || "ind") === "ind") return { ...g, support: sp, usedSupport: sp };
+  return g;
 }
 
 function templatesFromGoals(goals) {
@@ -649,6 +666,7 @@ function templatesFromGoals(goals) {
     ruleMode: ["total", "opps", "across"].includes(g.ruleMode) ? g.ruleMode : "row",
     ruleN: typeof g.ruleN === "number" ? g.ruleN : 3,
     support: g.support || "ind",
+    supportSet: !!g.supportSet,
     supportOk: Array.isArray(g.supportOk) ? g.supportOk : [],
     biteTarget: typeof g.biteTarget === "number" ? g.biteTarget : 0,
     items: (g.items || []).map(it => ({ name: it.name })),
@@ -659,16 +677,21 @@ function templatesFromGoals(goals) {
   }));
 }
 
-function normalizeGoalFields(g) {
+function normalizeGoalFields(g0) {
+  const g = autoSupport(g0);
   return {
     ...g,
+    helped: typeof g.helped === "string" ? g.helped : "",
+    notHelped: typeof g.notHelped === "string" ? g.notHelped : "",
+    higher: typeof g.higher === "string" ? g.higher : "",
     tid: g.tid || makeId("t"),
     skipped: !!g.skipped,
     done: !!g.done,
     type: ["tally", "duration", "bites"].includes(g.type) ? g.type : "percent",
     durations: Array.isArray(g.durations) ? g.durations.filter(d => typeof d === "number") : [],
     support: typeof g.support === "string" && g.support ? g.support : "ind",
-    usedSupport: typeof g.usedSupport === "string" && g.usedSupport ? g.usedSupport : "ind",
+    // Taps always count at the written level now (+ = at level or more independent).
+    usedSupport: typeof g.support === "string" && g.support ? g.support : "ind",
     sup: (g.sup && typeof g.sup === "object" && !Array.isArray(g.sup)) ? g.sup : {},
     ctx: g.ctx === "str" || g.ctx === "unstr" ? g.ctx : "",
     ctxData: (g.ctxData && g.ctxData.str && g.ctxData.unstr) ? g.ctxData : { str: { c: 0, i: 0 }, unstr: { c: 0, i: 0 } },
@@ -1700,7 +1723,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, onChange, canSkip, index, 
   const isDur = goal.type === "duration";
   const selSup = goal.usedSupport || "ind";
   const wrSup = goal.support || "ind";
-  const offLevel = !isDur && !hasItems && selSup !== wrSup;
+  const offLevel = false;
   const supTot = Object.values(goal.sup || {}).reduce((a, b) => ({ c: a.c + (b.c || 0), i: a.i + (b.i || 0) }), { c: 0, i: 0 });
   const oppsCap = (goal.ruleMode === "opps" && typeof goal.targetOf === "number" && goal.targetOf > 0) ? goal.targetOf : null;
   const capAi = hasItems ? Math.min(goal.activeItem || 0, goal.items.length - 1) : 0;
@@ -1796,6 +1819,15 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, onChange, canSkip, index, 
 
   const hasTimer = goal.timerDuration != null;
   const timerAlert = goal.timerAlert;
+
+  if (goal.done) {
+    return (
+      <div style={{ marginBottom: 6 }}>
+        <CompactLine goal={goal} index={index} at={atCriteria} onUpdate={onUpdate} onTap={() => update({ done: false })} />
+        <div style={{ fontSize: 10, color: "#94a3b8", margin: "-3px 0 0 12px" }}>Done for today · tap to reopen</div>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -1930,32 +1962,20 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, onChange, canSkip, index, 
           ))}
         </div>
 
-        <div style={{ marginBottom: 10 }}>
-          <button onClick={() => setSupportOpen(v => !v)} style={{
-            display: "flex", alignItems: "center", width: "100%", gap: 6,
-            background: "none", border: "none", cursor: "pointer", padding: "2px 0",
-            fontFamily: "inherit",
-          }}>
-            <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#94a3b8" }}>Support</span>
-            <span style={{ fontSize: 12, fontWeight: 700, color: (goal.usedSupport || "ind") === (goal.support || "ind") ? "#4f46e5" : "#d97706" }}>
-              {selSup}{offLevel ? " · taps log under this level" : ""}
+        {!isDur && goal.type !== "bites" && wrSup !== "ind" && wrSup !== "sp" && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#94a3b8" }}>Level</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#4f46e5" }}>
+              + = {SUPPORT_NAMES[wrSup] || wrSup} or less help
             </span>
-            <span style={{ fontSize: 12, marginLeft: "auto", color: "#cbd5e1" }}>{supportOpen ? "▲" : "▼"}</span>
-          </button>
-          {supportOpen && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
-              {SUPPORT_CODES.map(c => (
-                <button key={c} onClick={() => update({ usedSupport: c })} style={{
-                  padding: "4px 9px", borderRadius: 6,
-                  border: `1.5px solid ${(goal.usedSupport || "ind") === c ? "#4f46e5" : "#e2e8f0"}`,
-                  background: (goal.usedSupport || "ind") === c ? "#ede9fe" : "#f8fafc",
-                  color: (goal.usedSupport || "ind") === c ? "#4f46e5" : "#64748b",
-                  fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
-                }}>{c}{(goal.sup && goal.sup[c] && ((goal.sup[c].c || 0) + (goal.sup[c].i || 0)) > 0) ? ` · ${goal.sup[c].c || 0}/${(goal.sup[c].c || 0) + (goal.sup[c].i || 0)}` : ""}</button>
-              ))}
-            </div>
-          )}
-        </div>
+            <input
+              value={goal.higher || ""}
+              onChange={e => update({ higher: e.target.value })}
+              placeholder="Did it with less help? (e.g., ind x2)"
+              style={{ flex: "1 1 160px", minWidth: 0, border: "1.5px solid #e2e8f0", borderRadius: 7, padding: "5px 8px", fontSize: 12, fontFamily: "inherit", outline: "none", background: "#fafafa" }}
+            />
+          </div>
+        )}
 
         {itemPrompt && (
           <PromptModal
@@ -2266,7 +2286,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, onChange, canSkip, index, 
             <div style={{ background: "#f8fafc", border: "1.5px solid #e2e8f0", borderRadius: 10, padding: 10 }}>
               <textarea
                 value={goal.fullGoal}
-                onChange={e => update({ fullGoal: e.target.value })}
+                onChange={e => onUpdate(goal.id, prev => autoSupport({ ...prev, fullGoal: e.target.value, ...(prev.supportSet ? {} : { support: "ind" }) }))}
                 placeholder="Full goal wording & criteria (kept out of daily view)..."
                 rows={2}
                 style={{
@@ -2349,7 +2369,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, onChange, canSkip, index, 
                     const set = [goal.support || "ind", ...(goal.supportOk || [])];
                     const next = set.includes(c) ? set.filter(x => x !== c) : [...set, c];
                     const primary = next[0] || "ind";
-                    update({ support: primary, supportOk: next.slice(1), usedSupport: primary });
+                    update({ support: primary, supportOk: next.slice(1), usedSupport: primary, supportSet: true });
                   }} style={{
                     padding: "3px 8px", borderRadius: 6,
                     border: `1.5px solid ${inSet ? "#4f46e5" : "#e2e8f0"}`,
@@ -2412,7 +2432,17 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, onChange, canSkip, index, 
           )}
         </div>
 
-        <div style={{ marginTop: 10 }}>
+        <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+          {[["helped", "👍 Benefitted from...", "#16a34a"], ["notHelped", "👎 Didn't help...", "#dc2626"]].map(([k, ph, col]) => (
+            <input key={k}
+              value={goal[k] || ""}
+              onChange={e => update({ [k]: e.target.value })}
+              placeholder={ph}
+              style={{ flex: 1, minWidth: 0, border: `1.5px solid ${(goal[k] || "").trim() ? col : "#e2e8f0"}`, borderRadius: 8, padding: "8px 10px", fontSize: 13, fontFamily: "inherit", outline: "none", background: "#fafafa", color: "#334155" }}
+            />
+          ))}
+        </div>
+        <div style={{ marginTop: 6 }}>
           <textarea
             value={goal.notes}
             onChange={e => update({ notes: e.target.value })}
@@ -2496,6 +2526,8 @@ function SummaryLine({ goal, index }) {
       <span style={{ fontWeight: 600, color: "#e2e8f0", fontSize: 14 }}>{label}</span>
       <span style={{ color: "#94a3b8", fontSize: 13 }}> — </span>
       <span style={{ color: "#cbd5e1", fontSize: 13, fontFamily: "monospace" }}>{dataStr}</span>
+      {(goal.higher || "").trim() && <span style={{ color: "#94a3b8", fontSize: 13 }}> (with less help: {goal.higher.trim()})</span>}
+      {helpStr(goal) && <span style={{ color: "#94a3b8", fontSize: 13 }}>; {helpStr(goal)}</span>}
       {goal.notes.trim() && (
         <span style={{ color: "#94a3b8", fontSize: 13 }}>; {goal.notes.trim()}</span>
       )}
@@ -2510,7 +2542,7 @@ function applyTap(goal, field, delta, onUpdate) {
   const hasItems = (goal.items || []).length > 0;
   const selSup = goal.usedSupport || "ind";
   const wrSup = goal.support || "ind";
-  const offLevel = !hasItems && selSup !== wrSup;
+  const offLevel = false;
   if (hasItems) {
     onUpdate(goal.id, (prev) => {
       const idx = Math.min(prev.activeItem || 0, (prev.items || []).length - 1);
@@ -3542,11 +3574,11 @@ function App() {
     }
     let html = `<p><strong>${dateStr}</strong></p>`;
     if (makeupLine) html += `<p><em>${makeupLine}</em></p>`;
-    goals.filter(g => !g.skipped && !isEnding(g) && (goalHasData(g) || (g.notes || "").trim() || matStr(g))).forEach((g, i) => {
+    goals.filter(g => !g.skipped && !isEnding(g) && (goalHasData(g) || (g.notes || "").trim() || matStr(g) || helpStr(g))).forEach((g, i) => {
       const label = `${g.status === "screening" ? "Screening: " : ""}${g.label || `Goal ${i + 1}`}`;
       // Goal with a note and/or materials but no data: copy just those.
       if (!goalHasData(g)) {
-        html += `<p>${label} — ${[(g.notes || "").trim(), matStr(g)].filter(Boolean).join("; ")}</p>`;
+        html += `<p>${label} — ${[helpStr(g), (g.notes || "").trim(), matStr(g)].filter(Boolean).join("; ")}</p>`;
         return;
       }
       const correct = g.correct ?? 0;
@@ -3602,6 +3634,8 @@ function App() {
         dataStr = itemsSummary(g);
       }
       let line = `${label} — ${dataStr}`;
+      if ((g.higher || "").trim()) line += ` (with less help: ${g.higher.trim()})`;
+      if (helpStr(g)) line += `; ${helpStr(g)}`;
       if (g.notes.trim()) line += `; ${g.notes.trim()}`;
       if (matStr(g)) line += `; ${matStr(g)}`;
       html += `<p>${line}</p>`;
@@ -3631,11 +3665,11 @@ function App() {
       return out.join("\n");
     }
     let lines = makeupLine ? [dateStr, makeupLine, ""] : [dateStr, ""];
-    goals.filter(g => !g.skipped && !isEnding(g) && (goalHasData(g) || (g.notes || "").trim() || matStr(g))).forEach((g, i) => {
+    goals.filter(g => !g.skipped && !isEnding(g) && (goalHasData(g) || (g.notes || "").trim() || matStr(g) || helpStr(g))).forEach((g, i) => {
       const label = `${g.status === "screening" ? "Screening: " : ""}${g.label || `Goal ${i + 1}`}`;
       // Goal with a note and/or materials but no data: copy just those.
       if (!goalHasData(g)) {
-        lines.push(`${label} — ${[(g.notes || "").trim(), matStr(g)].filter(Boolean).join("; ")}`);
+        lines.push(`${label} — ${[helpStr(g), (g.notes || "").trim(), matStr(g)].filter(Boolean).join("; ")}`);
         lines.push("");
         return;
       }
@@ -3692,6 +3726,8 @@ function App() {
         dataStr = itemsSummary(g);
       }
       let line = `${label} — ${dataStr}`;
+      if ((g.higher || "").trim()) line += ` (with less help: ${g.higher.trim()})`;
+      if (helpStr(g)) line += `; ${helpStr(g)}`;
       if (g.notes.trim()) line += `; ${g.notes.trim()}`;
       if (matStr(g)) line += `; ${matStr(g)}`;
       lines.push(line);
