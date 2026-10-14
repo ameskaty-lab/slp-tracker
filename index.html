@@ -2527,6 +2527,16 @@ function SummaryLine({ goal, index }) {
     dataStr = itemsSummary(goal);
   }
 
+  if (!goalHasData(goal)) {
+    const rest = [helpStr(goal), (goal.notes || "").trim(), usedMat.length ? `Materials: ${usedMat.join(", ")}` : ""].filter(Boolean).join("; ");
+    return (
+      <div style={{ marginBottom: 12 }}>
+        <span style={{ fontWeight: 600, color: "#e2e8f0", fontSize: 14 }}>{label}</span>
+        <span style={{ color: "#94a3b8", fontSize: 13 }}> — {rest}</span>
+      </div>
+    );
+  }
+
   return (
     <div style={{ marginBottom: 12 }}>
       <span style={{ fontWeight: 600, color: "#e2e8f0", fontSize: 14 }}>{label}</span>
@@ -4316,7 +4326,7 @@ function App() {
           {makeupLine && (
             <div style={{ fontSize: 13, color: "#7dd3fc", fontWeight: 700, marginBottom: 8 }}>🔁 {makeupLine}</div>
           )}
-          {!isAbsent && goals.filter(g => !g.skipped && !isEnding(g)).map((g, i) => <SummaryLine key={g.id} goal={g} index={i} />)}
+          {!isAbsent && goals.filter(g => !g.skipped && !isEnding(g) && (goalHasData(g) || (g.notes || "").trim() || matStr(g) || helpStr(g))).map((g, i) => <SummaryLine key={g.id} goal={g} index={i} />)}
           {(session.goalUpdates || []).map(u => (
             <div key={u.tid} style={{ fontSize: 13, color: "#fde68a", fontWeight: 700, marginBottom: 8 }}>{u.text}</div>
           ))}
