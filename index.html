@@ -3829,12 +3829,12 @@ function App() {
           if (id) { if (st.docId && st.docId !== id) kept++; else if (!st.docId) { next = { ...next, docId: id }; linked++; } }
           if (L.building && !(st.building || "").trim()) { next = { ...next, building: String(L.building) }; bset++; }
           const uid = docIdFrom(L.updates || "");
-          if (uid && !next.updateDocId) { next = { ...next, updateDocId: uid }; ulinked++; }
+          if (uid && next.updateDocId !== uid) { next = { ...next, updateDocId: uid }; ulinked++; }
           return next;
         });
         const missing = Object.keys(parsed.links).filter(k => !matched.has(k));
         setStore(prev => ({ ...prev, roster: newRoster }));
-        return { ok: true, text: `✓ Linked ${linked} Doc${linked === 1 ? "" : "s"}${ulinked ? `, ${ulinked} parent update Doc${ulinked === 1 ? "" : "s"}` : ""}${bset ? `, set ${bset} building${bset === 1 ? "" : "s"}` : ""}${kept ? ` (${kept} already had a different Doc — left as is)` : ""}${missing.length ? `. Not in your roster: ${missing.join(", ")}` : ""}` };
+        return { ok: true, text: `✓ ${[linked ? `Linked ${linked} notes Doc${linked === 1 ? "" : "s"}` : "", ulinked ? `Linked ${ulinked} parent update Doc${ulinked === 1 ? "" : "s"}` : ""].filter(Boolean).join(", ") || "Nothing new to link (already linked)"}${bset ? `, set ${bset} building${bset === 1 ? "" : "s"}` : ""}${kept ? ` (${kept} already had a different Doc — left as is)` : ""}${missing.length ? `. Not in your roster: ${missing.join(", ")}` : ""}` };
       }
       if (parsed.slpRoster !== 1 || !Array.isArray(parsed.students)) throw new Error();
       const cleanGoal = (t) => normalizeGoalFields({
