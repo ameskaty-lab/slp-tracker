@@ -87,7 +87,11 @@ function rememberGAccount() { try { localStorage.setItem(GACCT_OK_KEY, "1"); } c
 function startGoogleSignIn(pending) {
   const state = Math.random().toString(36).slice(2) + Date.now().toString(36);
   try { localStorage.setItem(GPENDING_KEY, JSON.stringify({ state, ...(pending || {}) })); } catch {}
-  const redirect = location.origin + location.pathname;
+  // Must exactly match the redirect URI registered in Google Cloud: ".../slp-tracker/"
+  // (the home-screen app opens ".../slp-tracker/index.html", so strip that).
+  let path = location.pathname.replace(/index\.html$/, "");
+  if (!path.endsWith("/")) path += "/";
+  const redirect = location.origin + path;
   const url = "https://accounts.google.com/o/oauth2/v2/auth?" + new URLSearchParams({
     client_id: GOOGLE_CLIENT_ID, redirect_uri: redirect, response_type: "token",
     scope: GOOGLE_SCOPE, include_granted_scopes: "true", state,
