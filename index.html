@@ -2853,7 +2853,7 @@ function RosterPanel({ roster, onRename, onDelete, onMove, onShare, onImport, on
 
       <div style={{ marginTop: 12 }}>
         <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#94a3b8", marginBottom: 6 }}>
-          Import Roster Code
+          Import Roster or Doc Links Code
         </div>
         <textarea
           value={importText}
@@ -3366,6 +3366,26 @@ function App() {
       const end = text.lastIndexOf("}");
       if (start === -1 || end === -1) throw new Error();
       const parsed = JSON.parse(text.slice(start, end + 1));
+      // Doc links code: { slpDocLinks: 1, links: { "AmMi": { doc, building } } }
+      if (parsed.slpDocLinks === 1 && parsed.links && typeof parsed.links === "object") {
+        let linked = 0, kept = 0, bset = 0;
+        const matched = new Set();
+        const newRoster = roster.map(st => {
+          const nm = st.name.trim().toLowerCase();
+          const key = Object.keys(parsed.links).find(k => k.trim().toLowerCase() === nm || nm.split(/\s+/)[0] === k.trim().toLowerCase());
+          if (!key) return st;
+          matched.add(key);
+          const L = parsed.links[key] || {};
+          const id = docIdFrom(L.doc || "");
+          let next = st;
+          if (id) { if (st.docId && st.docId !== id) kept++; else if (!st.docId) { next = { ...next, docId: id }; linked++; } }
+          if (L.building && !(st.building || "").trim()) { next = { ...next, building: String(L.building) }; bset++; }
+          return next;
+        });
+        const missing = Object.keys(parsed.links).filter(k => !matched.has(k));
+        setStore(prev => ({ ...prev, roster: newRoster }));
+        return { ok: true, text: `✓ Linked ${linked} Doc${linked === 1 ? "" : "s"}${bset ? `, set ${bset} building${bset === 1 ? "" : "s"}` : ""}${kept ? ` (${kept} already had a different Doc — left as is)` : ""}${missing.length ? `. Not in your roster: ${missing.join(", ")}` : ""}` };
+      }
       if (parsed.slpRoster !== 1 || !Array.isArray(parsed.students)) throw new Error();
       const cleanGoal = (t) => normalizeGoalFields({
         tid: typeof t.tid === "string" ? t.tid : null,
