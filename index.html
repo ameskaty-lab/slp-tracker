@@ -147,11 +147,10 @@ function docParagraphs(doc) {
 function findNoteIndex(doc) {
   const ps = docParagraphs(doc);
   const h = ps.findIndex(p => MONTH_HEAD.test(p.text) && !isDateLine(p.text));
-  if (h === -1) {
-    const d = ps.findIndex(p => isDateLine(p.text));
-    if (d !== -1) return ps[d].start;
-    return ps.length > 1 ? ps[1].start : 1;
-  }
+  const d0 = ps.findIndex(p => isDateLine(p.text) && !MONTH_HEAD.test(p.text));
+  // Notes written above the first month heading (no heading for this month yet): go above the newest one.
+  if (d0 !== -1 && (h === -1 || d0 < h)) return ps[d0].start;
+  if (h === -1) return ps.length > 1 ? ps[1].start : 1;
   for (let j = h + 1; j < ps.length; j++) {
     if (isDateLine(ps[j].text) && !MONTH_HEAD.test(ps[j].text)) return ps[j].start;
     if (MONTH_HEAD.test(ps[j].text)) {
@@ -3727,6 +3726,7 @@ function App() {
       if (e.code === 404 || e.code === 403) forgetGAccount();
       setDocStatus({ sid: job.sid, ok: false, msg: e.code === 404 || e.code === 403
         ? "Couldn't open that Doc — maybe the wrong Google account. Tap Send again to pick your herridge account (or check the Doc link in Manage Roster)."
+        : e.code ? `Google said no (error ${e.code}) — your note is still here. Try again, or copy it in by hand.`
         : "Couldn't reach Google — check your connection and try again. Your note is still here." });
     }
   };
