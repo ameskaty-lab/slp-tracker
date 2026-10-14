@@ -67,6 +67,7 @@ const GOOGLE_CLIENT_ID = "507523222315-onns107c5iildda99pquau5e2lcmj0b1.apps.goo
 const GOOGLE_SCOPE = "https://www.googleapis.com/auth/documents";
 const GTOKEN_KEY = "slp_gtoken";
 const GPENDING_KEY = "slp_gauth_pending";
+const GACCT_OK_KEY = "slp_gacct_ok"; // set once a Doc was reached with the chosen account
 
 function docIdFrom(link) {
   const m = String(link || "").match(/\/document\/d\/([a-zA-Z0-9_-]{20,})/) || String(link || "").match(/^([a-zA-Z0-9_-]{30,})$/);
@@ -80,6 +81,8 @@ function getGToken() {
   return null;
 }
 function clearGToken() { try { localStorage.removeItem(GTOKEN_KEY); } catch {} }
+function forgetGAccount() { try { localStorage.removeItem(GACCT_OK_KEY); localStorage.removeItem(GTOKEN_KEY); } catch {} }
+function rememberGAccount() { try { localStorage.setItem(GACCT_OK_KEY, "1"); } catch {} }
 // Full-page redirect sign-in (pop-ups don't work in iPhone home-screen apps).
 function startGoogleSignIn(pending) {
   const state = Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -88,6 +91,9 @@ function startGoogleSignIn(pending) {
   const url = "https://accounts.google.com/o/oauth2/v2/auth?" + new URLSearchParams({
     client_id: GOOGLE_CLIENT_ID, redirect_uri: redirect, response_type: "token",
     scope: GOOGLE_SCOPE, include_granted_scopes: "true", state,
+    // Show Google's account picker until a send has worked, so the phone's default
+    // account isn't used by mistake.
+    ...((() => { try { return localStorage.getItem(GACCT_OK_KEY) ? {} : { prompt: "select_account" }; } catch { return { prompt: "select_account" }; } })()),
   }).toString();
   location.href = url;
 }
@@ -3675,16 +3681,19 @@ function App() {
     try {
       if (job.kind === "month") {
         await sendMonthListToDoc(job.docId, job.list, token);
+        rememberGAccount();
         setDocStatus({ sid: job.sid, ok: true, msg: "✓ Goal list added to the Doc" });
       } else {
         const r = await sendNoteToDoc(job.docId, job.text, token);
         markSent(job.sid);
+        rememberGAccount();
         setDocStatus({ sid: job.sid, ok: true, msg: `✓ Added to "${r.title}"` });
       }
     } catch (e) {
       if (e.code === 401) { startGoogleSignIn(job); return; }
+      if (e.code === 404 || e.code === 403) forgetGAccount();
       setDocStatus({ sid: job.sid, ok: false, msg: e.code === 404 || e.code === 403
-        ? "Couldn't open that Doc. Check its link in Manage Roster (and that it's in your herridge Google account)."
+        ? "Couldn't open that Doc — maybe the wrong Google account. Tap Send again to pick your herridge account (or check the Doc link in Manage Roster)."
         : "Couldn't reach Google — check your connection and try again. Your note is still here." });
     }
   };
@@ -3692,7 +3701,8 @@ function App() {
   useEffect(() => {
     if (!gAuth) return;
     if (gAuth.error) {
-      setDocStatus({ sid: gAuth.pending && gAuth.pending.sid, ok: false, msg: gAuth.error === "access_denied" ? "Google sign-in was cancelled." : "Google sign-in didn't finish. Try Send to Doc again." });
+      forgetGAccount();
+      setDocStatus({ sid: gAuth.pending && gAuth.pending.sid, ok: false, msg: gAuth.error === "access_denied" ? "Google sign-in didn't go through. Tap Send again and choose your herridge account." : "Google sign-in didn't finish. Try Send to Doc again." });
       return;
     }
     if (gAuth.pending && gAuth.pending.kind) {
