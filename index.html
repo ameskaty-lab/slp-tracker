@@ -433,12 +433,13 @@ function releaseWake() {
 }
 
 // Minutes mentioned in a goal ("in 15 min", "/ 10m", "10-minute", "30-minute session").
+// 30 minutes or more = the whole session, so no countdown.
 function goalMinutes(goal) {
-  if (goal.timerDuration) return Math.round(goal.timerDuration / 60);
+  if (goal.timerDuration) { const tm = Math.round(goal.timerDuration / 60); return tm > 0 && tm < 30 ? tm : 0; }
   const txt = `${goal.label || ""} ${goal.fullGoal || ""}`;
   const m = txt.match(/(\d+)\s*-?\s*(?:minutes?|mins?\b|m\b)/i);
   const n = m ? Number(m[1]) : 0;
-  return n > 0 && n <= 120 ? n : 0;
+  return n > 0 && n < 30 ? n : 0;
 }
 
 function playBeeps() {
@@ -1455,6 +1456,34 @@ function GoalCountdown({ goal, onUpdate }) {
         <button onClick={reset} style={{ padding: "10px 12px", borderRadius: 10, border: "1.5px solid #e2e8f0", background: "#fff", color: "#64748b", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>↺</button>
       )}
     </div>
+  );
+}
+
+// Small countdown button for the collapsed (compact) view.
+function CompactCountdown({ goal, onUpdate }) {
+  const mins = goalMinutes(goal);
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!goal.cdEnd) return;
+    const t = setInterval(() => setTick(x => x + 1), 500);
+    return () => clearInterval(t);
+  }, [goal.cdEnd]);
+  if (!mins) return null;
+  const total = mins * 60;
+  const running = !!goal.cdEnd;
+  const left = running ? Math.max(0, Math.ceil((goal.cdEnd - Date.now()) / 1000)) : (typeof goal.cdLeft === "number" ? goal.cdLeft : total);
+  const tap = (e) => {
+    e.stopPropagation();
+    if (goal.cdDone) { stopAlarm(); onUpdate(goal.id, (prev) => ({ ...prev, cdEnd: null, cdLeft: null, cdDone: false })); return; }
+    if (running) onUpdate(goal.id, (prev) => ({ ...prev, cdEnd: null, cdLeft: left }));
+    else { unlockAlarm(); onUpdate(goal.id, (prev) => ({ ...prev, cdEnd: Date.now() + left * 1000, cdLeft: null, cdDone: false })); }
+  };
+  return (
+    <button onClick={tap} title={goal.cdDone ? "Reset timer" : running ? "Pause" : `Start ${mins} min`} style={{
+      flexShrink: 0, height: 36, padding: "0 8px", borderRadius: 10, border: "none", cursor: "pointer",
+      background: goal.cdDone ? "#f59e0b" : running ? "#0ea5e9" : "#e0f2fe", color: goal.cdDone || running ? "#fff" : "#0369a1",
+      fontSize: 12, fontWeight: 800, fontFamily: "ui-monospace, Menlo, monospace",
+    }}>{goal.cdDone ? "⏰ ↺" : `${running ? "⏸" : "▶"}${formatTime(left)}`}</button>
   );
 }
 
@@ -2555,8 +2584,7 @@ function CompactLine({ goal, index, onTap, at, onUpdate }) {
       {at && <span style={{ fontSize: 12, flexShrink: 0 }}>🎯</span>}
       {goal.status === "screening" && <span style={{ fontSize: 9, fontWeight: 800, color: "#b45309", flexShrink: 0 }}>SCR</span>}
       {goal.status === "new" && <span style={{ fontSize: 9, fontWeight: 800, color: "#15803d", flexShrink: 0 }}>NEW</span>}
-      {goal.cdEnd && <span style={{ fontSize: 12, flexShrink: 0 }}>⏱</span>}
-      {goal.cdDone && <span style={{ fontSize: 12, flexShrink: 0 }}>⏰</span>}
+
       {goal.done && <span style={{ fontSize: 11, color: "#16a34a", fontWeight: 700, flexShrink: 0 }}>✓</span>}
       <span style={{ fontSize: 13, fontWeight: 700, color: "#4f46e5", fontFamily: "ui-monospace, Menlo, monospace", flexShrink: 0 }}>{s}</span>
       {hasIt && goal.items[aiC] && !goal.oneTry && goal.type !== "bites" && (
@@ -2590,6 +2618,7 @@ function CompactLine({ goal, index, onTap, at, onUpdate }) {
           )}
         </span>
       )}
+      <CompactCountdown goal={goal} onUpdate={onUpdate} />
       {goal.type !== "duration" && goal.type !== "bites" && !goal.oneTry && (
         <button onClick={(e) => { e.stopPropagation(); if (!locked) applyTap(goal, "correct", 1, onUpdate); }} disabled={locked} style={{
           width: 36, height: 36, borderRadius: 10, border: "none", flexShrink: 0,
