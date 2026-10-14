@@ -1232,10 +1232,12 @@ async function sendUpdateToDoc(docId, title, tables, token, force) {
     const e = new Error("dup"); e.code = "dup"; throw e;
   }
   const markers = tables.map((_, i) => `[[SLP-TABLE-${i + 1}]]`);
-  const head = title + "\n" + markers.map(m => m + "\n").join("");
+  // Extra empty paragraph at the end holds the page break, so last month starts on the next page.
+  const head = title + "\n" + markers.map(m => m + "\n").join("") + "\n";
   const tEnd = 1 + title.length + 1;
   await gfetch(url + ":batchUpdate", token, { requests: [
     { insertText: { location: { index: 1 }, text: head } },
+    { insertPageBreak: { location: { index: head.length } } },
     { updateParagraphStyle: { range: { startIndex: 1, endIndex: 1 + head.length }, paragraphStyle: { namedStyleType: "NORMAL_TEXT" }, fields: "namedStyleType" } },
     { updateTextStyle: { range: { startIndex: 1, endIndex: 1 + head.length }, textStyle: { bold: false, italic: false }, fields: "bold,italic" } },
     { updateParagraphStyle: { range: { startIndex: 1, endIndex: tEnd }, paragraphStyle: { namedStyleType: "HEADING_2" }, fields: "namedStyleType" } },
