@@ -3036,6 +3036,7 @@ function App() {
   const goals = session.goals;
   const reinforcers = session.reinforcers;
   const parentNote = session.parentNote || "";
+  const [pnCopied, setPnCopied] = useState(false);
   const selectedStudent = roster.find(s => s.id === selectedId) || null;
   const studentHistory = selectedStudent ? (selectedStudent.history || []) : [];
 
@@ -3792,6 +3793,14 @@ function App() {
     runDocJob({ kind: "month", sid, docId: st.docId, list: { plain: list.plain } });
   };
 
+  const copyParentNote = async () => {
+    try {
+      await navigator.clipboard.writeText(parentNote.trim());
+      setPnCopied(true);
+      setTimeout(() => setPnCopied(false), 2000);
+    } catch {}
+  };
+
   const handleCopy = async () => {
     const html = buildSummaryHTML();
     const text = buildSummaryPlainText();
@@ -4304,6 +4313,13 @@ function App() {
           {parentNote.trim() && (
             <div style={{ borderTop: "1px solid #334155", paddingTop: 12, marginTop: 8, fontSize: 13, color: "#94a3b8" }}>
               <span style={{ fontWeight: 700, color: "#cbd5e1" }}>Parent note:</span> {parentNote.trim()}
+              <div>
+                <button onClick={copyParentNote} style={{
+                  marginTop: 8, padding: "6px 12px", borderRadius: 8, border: "1.5px solid #475569",
+                  background: pnCopied ? "#22c55e" : "transparent", color: pnCopied ? "#fff" : "#cbd5e1",
+                  fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+                }}>{pnCopied ? "✓ Copied!" : "📋 Copy just the parent note"}</button>
+              </div>
             </div>
           )}
           {bcbaCopy && (
