@@ -1230,6 +1230,140 @@ function GoalReview({ student, onApply, onRestore, onDeleteArchived, monthDate, 
   );
 }
 
+// ---- Parent note draft (Katy's voice: 1-2 warm, concrete sentences, first name first, no codes) ----
+const PAST_IRREG = { make: "made", put: "put", say: "said", take: "took", give: "gave", find: "found", tell: "told", sit: "sat", get: "got", run: "ran", stop: "stopped", hold: "held", go: "went", do: "did", hit: "hit", read: "read", build: "built", draw: "drew", eat: "ate", drink: "drank", throw: "threw", catch: "caught", bring: "brought", keep: "kept", begin: "began", blow: "blew", swing: "swung", sing: "sang", show: "showed", ask: "asked", comment: "commented", answer: "answered", follow: "followed", open: "opened", label: "labeled", travel: "traveled", wait: "waited", sequence: "sequenced", turn: "turned", tap: "tapped", nod: "nodded", clap: "clapped", hug: "hugged", plan: "planned" };
+function pastTense(v) {
+  const w = v.toLowerCase();
+  if (PAST_IRREG[w]) return PAST_IRREG[w];
+  if (/e$/.test(w)) return w + "d";
+  if (/[^aeiou]y$/.test(w)) return w.slice(0, -1) + "ied";
+  return w + "ed";
+}
+const PRON = { he: { s: "He", o: "him", p: "his" }, she: { s: "She", o: "her", p: "her" }, they: { s: "They", o: "them", p: "their" } };
+const SUP_WORDS = { m: "a model", im: "a model", r: "a little help", g: "a gesture", s: "pictures", oh: "a little help", p: "a little help", f: "a first-sound hint", k: "a little help" };
+
+// "Will answer what questions given visual supports with 80% accuracy" -> { verb: "answer", rest: "what questions" }
+function goalAction(g) {
+  let t = String(g.fullGoal || g.label || "").trim().replace(/^\(?(?:new|achieved)\)?:?\s*/i, "").replace(/^[A-Z][a-z]+\s+(?=will\b)/, "");
+  t = t.replace(/^will\s+/i, "").replace(/\.$/, "");
+  t = t.split(/\s+(?:with|in|on|across|at|for|during|over)\s+(?:\d|at least|about|approximately|a minimum)|\s+\d+\s*(?:x\b|times?\b|\/|%)|\s*,?\s+(?:when|after|given|independently|spontaneously|without)\b|\s+\(|\s*;/i)[0].trim();
+  t = t.replace(/\s+to\s*$/i, "");
+  const m = t.match(/^([A-Za-z]+)\s*(.*)$/);
+  if (!m) return null;
+  const rest = m[2].replace(/\b(his|her|their)\b/gi, "")
+    .replace(/\s*in (?:the )?initial position of (?:single )?words/i, " at the start of words")
+    .replace(/\s*in (?:the )?final position of (?:single )?words/i, " at the end of words")
+    .replace(/\s*in (?:the )?medial position of (?:single )?words/i, " in the middle of words")
+    .replace(/\ba desired item\b|\bdesired items?\b|\bpreferred items?\b/i, "something they wanted")
+    .replace(/\s{2,}/g, " ").trim();
+  return { verb: m[1], rest };
+}
+
+function goalStats(g) {
+  const items = g.items || [];
+  if (g.type === "bites") {
+    let best = 0, food = "";
+    items.forEach(it => { const r = longestRun(it); if (r > best) { best = r; food = it.name; } });
+    return best > 0 ? { kind: "bites", c: best, t: best, food, score: 0.9 } : null;
+  }
+  if (g.type === "duration") return null;
+  let c = 0, i = 0;
+  if (items.length) items.forEach(it => { c += it.correct || 0; i += it.incorrect || 0; });
+  else {
+    c = (g.correct || 0) + ((g.intervals || []).reduce((s, v) => s + (v.c || 0), 0));
+    i = (g.incorrect || 0) + ((g.intervals || []).reduce((s, v) => s + (v.i || 0), 0));
+    Object.values(g.sup || {}).forEach(b => { c += b.c || 0; i += b.i || 0; });
+  }
+  if (g.type === "percent") {
+    if (c + i === 0 || c === 0) return null;
+    return { kind: "pct", c, t: c + i, score: c / (c + i) };
+  }
+  if (c === 0) return null;
+  return { kind: "tally", c, t: c, score: g.target ? Math.min(1, c / g.target) : 0.8 };
+}
+
+function draftParentNote({ name, pron, goals, reinforcers, materials, variant }) {
+  const P = PRON[pron] || PRON.they;
+  const cands = goals.map(g => ({ g, st: goalStats(g), act: goalAction(g) })).filter(x => x.st && x.act)
+    .sort((a, b) => b.st.score - a.st.score || b.st.t - a.st.t);
+  if (!cands.length) return "";
+  // Keep it positive: only feature goals that went at least half right, when there are any.
+  if (cands.some(x => x.st.score >= 0.5)) cands.splice(0, cands.length, ...cands.filter(x => x.st.score >= 0.5));
+  const pick = cands[(variant || 0) % cands.length];
+  const { g, st, act } = pick;
+  const verbed = pastTense(act.verb);
+  const obj = act.rest ? " " + act.rest.replace("something they wanted", `something ${P.s === "They" ? "they" : P.s.toLowerCase()} wanted`) : "";
+  const count = st.kind === "pct" ? (st.c === st.t ? `every time (${st.c} out of ${st.t})` : `${st.c} out of ${st.t} times`) : st.kind === "tally" ? `${st.c}x` : "";
+  const sup = (g.support || "ind");
+  const supPhrase = (sup === "ind" || sup === "sp") ? "" : ` when given ${SUP_WORDS[sup] || "a little help"}`;
+  const less = (g.higher || "").trim() ? `, and even did some on ${P.p} own` : "";
+  let s1;
+  if (st.kind === "bites") s1 = `${name} took ${st.c} bite${st.c === 1 ? "" : "s"} in a row${st.food ? ` of ${st.food}` : ""} today in speech!`;
+  else {
+    const openers = [`${name} did a great job today and ${verbed}${obj} ${count}${supPhrase}${less}.`, `${name} ${verbed}${obj} ${count} today in speech${supPhrase}${less}.`];
+    s1 = openers[Math.floor((variant || 0) / Math.max(1, cands.length)) % openers.length];
+  }
+  // Second sentence: what helped, else a fun activity/reinforcer.
+  const helped = (g.helped || "").trim();
+  const fun = String(reinforcers || "").split(/[,;\n]/).map(x => x.trim()).filter(Boolean)[0] || (materials || [])[0] || "";
+  let s2 = "";
+  if (helped) s2 = `${P.s} did best with ${helped.replace(/^(?:a |the )?/i, m => m.toLowerCase())}.`;
+  else if (fun) {
+    let f = fun.replace(/^[A-Z](?=[a-z])/, c => c.toLowerCase());
+    if (!/^(?:a|an|the|his|her|their|my)\s/i.test(f) && !/s$/i.test(f)) f = "the " + f;
+    s2 = `${P.s} ${P.s === "They" ? "were" : "was"} very engaged with ${f}.`;
+  }
+  return [s1, s2].filter(Boolean).join(" ").replace(/\s+([.,!])/g, "$1").replace(/\s{2,}/g, " ");
+}
+
+function ParentDraft({ student, goals, reinforcers, matLib, onUse, onSaveStudent }) {
+  const [variant, setVariant] = useState(0);
+  const [open, setOpen] = useState(false);
+  const [nameDraft, setNameDraft] = useState(student.firstName || "");
+  const name = (student.firstName || "").trim();
+  const pron = student.pron || "";
+  const live = goals.filter(g => !g.skipped && !isEnding(g));
+  const materials = live.flatMap(g => usedMaterials(g, matLib));
+  const text = name && pron ? draftParentNote({ name, pron, goals: live, reinforcers, materials, variant }) : "";
+  const chipS = (on) => ({ padding: "4px 10px", borderRadius: 999, border: `1.5px solid ${on ? "#7c3aed" : "#e2e8f0"}`, background: on ? "#ede9fe" : "#fff", color: on ? "#7c3aed" : "#64748b", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" });
+  if (!open) return (
+    <button onClick={() => setOpen(true)} style={{ padding: "4px 10px", borderRadius: 999, border: "1.5px solid #ddd6fe", background: "#faf5ff", color: "#7c3aed", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>✨ Draft</button>
+  );
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }} onClick={() => setOpen(false)}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, padding: "18px 16px", width: "90%", maxWidth: 380, boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}>
+        <div style={{ fontSize: 15, fontWeight: 800, color: "#1e293b", marginBottom: 10 }}>✨ Parent note draft</div>
+        {!name && (
+          <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+            <input value={nameDraft} onChange={e => setNameDraft(e.target.value)} placeholder={`${student.name}'s first name`}
+              style={{ flex: 1, minWidth: 0, border: "1.5px solid #e2e8f0", borderRadius: 8, padding: "7px 9px", fontSize: 13, fontFamily: "inherit", outline: "none" }} />
+            <button onClick={() => nameDraft.trim() && onSaveStudent({ firstName: nameDraft.trim() })} style={chipS(true)}>Save</button>
+          </div>
+        )}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b" }}>{name || "Child"} is</span>
+          {["he", "she", "they"].map(p => <button key={p} onClick={() => onSaveStudent({ pron: p })} style={chipS(pron === p)}>{p}</button>)}
+        </div>
+        {name && pron ? (
+          text ? (
+            <div style={{ background: "#faf5ff", border: "1.5px solid #ddd6fe", borderRadius: 10, padding: "10px 12px", fontSize: 14, color: "#334155", lineHeight: 1.5, marginBottom: 10 }}>{text}</div>
+          ) : (
+            <div style={{ fontSize: 13, color: "#94a3b8", marginBottom: 10 }}>No data to draft from yet — take some data first.</div>
+          )
+        ) : (
+          <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 10 }}>{name ? "Pick he / she / they once — the app remembers." : "Add the first name and pick he / she / they once — the app remembers."}</div>
+        )}
+        <div style={{ display: "flex", gap: 6 }}>
+          <button disabled={!text} onClick={() => { onUse(text); setOpen(false); }} style={{ flex: 1, padding: "10px", borderRadius: 9, border: "none", background: text ? "#7c3aed" : "#cbd5e1", color: "#fff", fontWeight: 700, fontSize: 14, cursor: text ? "pointer" : "default", fontFamily: "inherit" }}>Use this</button>
+          <button disabled={!text} onClick={() => setVariant(v => v + 1)} style={{ padding: "10px 12px", borderRadius: 9, border: "1.5px solid #ddd6fe", background: "#fff", color: "#7c3aed", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>↻ Another</button>
+          <button onClick={() => setOpen(false)} style={{ padding: "10px 12px", borderRadius: 9, border: "1.5px solid #e2e8f0", background: "#f8fafc", color: "#64748b", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+        </div>
+        <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 8 }}>Built from today's data, 👍 boxes and activities. Edit it after — it's a starting point.</div>
+      </div>
+    </div>
+  );
+}
+
 // Puts "Title" + tables at the top of the parent-shared monthly updates Doc (newest month on top).
 const isIdeasTable = (t) => /at home ideas/i.test((t.labels || []).join(" "));
 async function sendUpdateToDoc(docId, title, tables, token, force) {
@@ -3840,7 +3974,7 @@ function App() {
   const shareRoster = async () => {
     const payload = JSON.stringify({
       slpRoster: 1,
-      students: roster.map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "", owed: owedOf(s), archived: s.archived || [], docId: s.docId || "", updateDocId: s.updateDocId || "", firstName: s.firstName || "", perMonth: s.perMonth || 0 })),
+      students: roster.map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "", owed: owedOf(s), archived: s.archived || [], docId: s.docId || "", updateDocId: s.updateDocId || "", firstName: s.firstName || "", pron: s.pron || "", perMonth: s.perMonth || 0 })),
       matLib,
       schedule: Object.fromEntries(WEEKDAYS.map(({ d }) => [d, ((store.schedule || {})[d] || []).map(id => (roster.find(s => s.id === id) || {}).name).filter(Boolean)])),
     });
@@ -3919,7 +4053,7 @@ function App() {
         const inBuilding = typeof s.building === "string" ? s.building.trim() : "";
         const inOwed = (Array.isArray(s.owed) ? s.owed : []).filter(d => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d));
         if (idx === -1) {
-          newRoster.push({ id: makeId("student"), name: s.name.trim(), goals: inGoals, history: inHist.slice(-40), building: inBuilding, owed: [...new Set(inOwed)].sort(), docId: typeof s.docId === "string" ? s.docId : "", archived: (Array.isArray(s.archived) ? s.archived : []).filter(a => a && typeof a.tid === "string"), updateDocId: typeof s.updateDocId === "string" ? s.updateDocId : "", firstName: typeof s.firstName === "string" ? s.firstName : "", perMonth: typeof s.perMonth === "number" ? s.perMonth : 0 });
+          newRoster.push({ id: makeId("student"), name: s.name.trim(), goals: inGoals, history: inHist.slice(-40), building: inBuilding, owed: [...new Set(inOwed)].sort(), docId: typeof s.docId === "string" ? s.docId : "", archived: (Array.isArray(s.archived) ? s.archived : []).filter(a => a && typeof a.tid === "string"), updateDocId: typeof s.updateDocId === "string" ? s.updateDocId : "", firstName: typeof s.firstName === "string" ? s.firstName : "", pron: typeof s.pron === "string" ? s.pron : "", perMonth: typeof s.perMonth === "number" ? s.perMonth : 0 });
           added++;
           newSessions += inHist.length;
           return;
@@ -3960,6 +4094,7 @@ function App() {
         newRoster[idx] = { ...local, goals: localGoals, history, building, owed, archived, docId,
           updateDocId: local.updateDocId || (typeof s.updateDocId === "string" ? s.updateDocId : ""),
           firstName: local.firstName || (typeof s.firstName === "string" ? s.firstName : ""),
+          pron: local.pron || (typeof s.pron === "string" ? s.pron : ""),
           perMonth: typeof s.perMonth === "number" ? s.perMonth : (local.perMonth || 0) };
         if (extra.length > 0 || localGoals.length > beforeLen || updatedTpl || building !== (local.building || "") || owed.length !== owedOf(local).length) merged++;
         newSessions += extra.length;
@@ -4698,6 +4833,9 @@ function App() {
         <div style={{ marginBottom: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 1, flex: 1 }}>Parent note</span>
+            {selectedStudent && <ParentDraft key={selectedStudent.id} student={selectedStudent} goals={goals} reinforcers={reinforcers} matLib={matLib}
+              onUse={(t) => setParentNote(t)}
+              onSaveStudent={(f) => setStore(prev => ({ ...prev, roster: prev.roster.map(s => s.id === selectedStudent.id ? { ...s, ...f } : s) }))} />}
             {(() => {
               const txt = parentNote.trim() || (selectedStudent && selectedStudent.lastParentNote) || "";
               if (!txt) return null;
