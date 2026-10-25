@@ -1287,8 +1287,8 @@ function draftParentNote({ name, pron, goals, reinforcers, materials, variant })
   const cands = goals.map(g => ({ g, st: goalStats(g), act: goalAction(g) })).filter(x => x.st && x.act)
     .sort((a, b) => b.st.score - a.st.score || b.st.t - a.st.t);
   if (!cands.length) return "";
-  // Keep it positive: only feature goals that went at least half right, when there are any.
-  if (cands.some(x => x.st.score >= 0.5)) cands.splice(0, cands.length, ...cands.filter(x => x.st.score >= 0.5));
+  // Keep it positive: only feature goals that went mostly right, when there are any.
+  if (cands.some(x => x.st.score >= 0.6)) cands.splice(0, cands.length, ...cands.filter(x => x.st.score >= 0.6));
   const pick = cands[(variant || 0) % cands.length];
   const { g, st, act } = pick;
   const verbed = pastTense(act.verb);
