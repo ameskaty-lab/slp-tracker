@@ -639,6 +639,8 @@ function goalFromTemplate(t) {
     biteTarget: typeof t.biteTarget === "number" ? t.biteTarget : 0,
     items: (t.items || []).map(it => ({ name: typeof it === "string" ? it : String((it && it.name) || ""), correct: 0, incorrect: 0, att: false, bites: [] })),
     oneTry: !!t.oneTry,
+    itemsOff: !!t.itemsOff,
+    itemsHidden: !!t.itemsHidden,
     status: ["screening", "new", "ending"].includes(t.status) ? t.status : "",
     outcome: t.outcome || "", reason: t.reason || "", changedAt: t.changedAt || "", replacesTid: t.replacesTid || "", prevStatus: t.prevStatus || "",
     activeItem: 0,
@@ -671,6 +673,8 @@ function templatesFromGoals(goals) {
     biteTarget: typeof g.biteTarget === "number" ? g.biteTarget : 0,
     items: (g.items || []).map(it => ({ name: it.name })),
     oneTry: !!g.oneTry,
+    itemsOff: !!g.itemsOff,
+    itemsHidden: !!g.itemsHidden,
     status: g.status || "", outcome: g.outcome || "", reason: g.reason || "", changedAt: g.changedAt || "", replacesTid: g.replacesTid || "", prevStatus: g.prevStatus || "",
     matId: g.matId || "",
     matTweak: g.matTweak || "",
@@ -742,11 +746,16 @@ function itemPointsFor(history, tid, name) {
   return pts;
 }
 
+// Items can be paused for a goal ("one overall count"): the list is kept but taps go to the goal itself.
+function itemsOn(g) { return (g.items || []).length > 0 && !(g.itemsOff && g.type !== "bites"); }
+function itemsHaveData(g) { return (g.items || []).some(it => (it.correct || 0) + (it.incorrect || 0) > 0 || it.att); }
+
 function goalHasData(g) {
   if (g.zeroLogged) return true;
   if (g.type === "bites") return bitesHaveData(g);
   if (g.type === "duration") return (g.durations || []).length > 0;
-  if ((g.items || []).length > 0) return g.items.some(it => (it.correct || 0) + (it.incorrect || 0) > 0 || it.att);
+  if (itemsOn(g)) return itemsHaveData(g);
+  if (itemsHaveData(g)) return true;
   return (g.correct || 0) + (g.incorrect || 0)
     + Object.values(g.sup || {}).reduce((s, b) => s + (b.c || 0) + (b.i || 0), 0)
     + (g.intervals || []).reduce((s, iv) => s + (iv.c || 0) + (iv.i || 0), 0)
@@ -773,7 +782,7 @@ function itemsSummary(g) {
 
 function goalAtCriteria(goal, history) {
   if (goal.type === "bites" || goal.oneTry) return false;
-  if ((goal.items || []).length > 0) {
+  if (itemsOn(goal)) {
     return goal.items.every(it =>
       isAtCriteria({ ...goal, correct: it.correct || 0, incorrect: it.incorrect || 0 }, itemPointsFor(history, goal.tid, it.name))
     );
@@ -1268,8 +1277,8 @@ function goalStats(g) {
   }
   if (g.type === "duration") return null;
   let c = 0, i = 0;
-  if (items.length) items.forEach(it => { c += it.correct || 0; i += it.incorrect || 0; });
-  else {
+  items.forEach(it => { c += it.correct || 0; i += it.incorrect || 0; });
+  if (!itemsOn(g)) {
     c = (g.correct || 0) + ((g.intervals || []).reduce((s, v) => s + (v.c || 0), 0));
     i = (g.incorrect || 0) + ((g.intervals || []).reduce((s, v) => s + (v.i || 0), 0));
     Object.values(g.sup || {}).forEach(b => { c += b.c || 0; i += b.i || 0; });
@@ -2262,7 +2271,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, onChange, canSkip, index, 
     return () => clearInterval(intervalRef.current);
   }, [goal.timerRunning, tick]);
 
-  const hasItems = (goal.items || []).length > 0;
+  const hasItems = itemsOn(goal);
   const isDur = goal.type === "duration";
   const selSup = goal.usedSupport || "ind";
   const wrSup = goal.support || "ind";
@@ -2550,6 +2559,25 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, onChange, canSkip, index, 
           </>
         ) : (<>
         {hasItems && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+            <button onClick={() => update({ itemsHidden: !goal.itemsHidden })} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#94a3b8" }}>
+              Items ({goal.items.length}) {goal.itemsHidden ? "▼" : "▲"}
+            </button>
+            {goal.itemsHidden && <span style={{ fontSize: 12, fontWeight: 700, color: "#4f46e5" }}>· {cur.name}</span>}
+            <button onClick={() => update({ itemsOff: true })} title="Keep the list, but count this goal as one overall score" style={{ marginLeft: "auto", background: "none", border: "1.5px solid #e2e8f0", borderRadius: 999, padding: "3px 9px", cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700, color: "#64748b" }}>
+              One overall count
+            </button>
+          </div>
+        )}
+        {!hasItems && (goal.items || []).length > 0 && goal.type !== "bites" && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, background: "#f8fafc", border: "1.5px dashed #cbd5e1", borderRadius: 10, padding: "6px 10px" }}>
+            <span style={{ fontSize: 12, color: "#64748b", flex: 1 }}>
+              Counting as one overall score. Your {goal.items.length} items are saved{itemsHaveData(goal) ? " (with today's item data)" : ""}.
+            </span>
+            <button onClick={() => update({ itemsOff: false })} style={{ background: "#eef2ff", border: "1.5px solid #c7d2fe", borderRadius: 999, padding: "3px 9px", cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700, color: "#4f46e5", flexShrink: 0 }}>Use items</button>
+          </div>
+        )}
+        {hasItems && !goal.itemsHidden && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 10 }}>
             {goal.items.map((it, i) => {
               const t2 = (it.correct || 0) + (it.incorrect || 0);
@@ -3026,7 +3054,7 @@ function SummaryLine({ goal, index }) {
     dataStr = timerLabel ? `${total}x / ${timerLabel}` : `${total}x`;
   }
   const supAgg = Object.entries(goal.sup || {}).filter(([c2, b]) => (b.c || 0) + (b.i || 0) > 0);
-  if (supAgg.length > 0 && goal.type !== "duration" && (goal.items || []).length === 0) {
+  if (supAgg.length > 0 && goal.type !== "duration" && !itemsOn(goal)) {
     const wr = goal.support || "ind";
     const acc = new Set(["ind", "sp", wr, ...(goal.supportOk || [])]);
     const parts = [];
@@ -3040,7 +3068,7 @@ function SummaryLine({ goal, index }) {
     const accC = correct + supAgg.reduce((s, [cd, b]) => s + (acc.has(cd) ? (b.c || 0) : 0), 0);
     dataStr = parts.join(", ") + (goal.type === "percent" ? `; ${accC}/${allT} — ${allT > 0 ? Math.round((accC / allT) * 100) : 0}% at level` : `; ${accC}x at level`);
   }
-  if ((goal.intervals || []).length > 0 && (goal.items || []).length === 0) {
+  if ((goal.intervals || []).length > 0 && !itemsOn(goal)) {
     const ivs = [...goal.intervals, { c: correct, i: incorrect }].filter(iv => (iv.c || 0) + (iv.i || 0) > 0);
     const tc2 = ivs.reduce((s, iv) => s + (iv.c || 0), 0);
     const tt2 = ivs.reduce((s, iv) => s + (iv.c || 0) + (iv.i || 0), 0);
@@ -3066,8 +3094,11 @@ function SummaryLine({ goal, index }) {
       ? `longest ${formatTime(Math.max(...goal.durations))} (${goal.durations.length} stretch${goal.durations.length === 1 ? "" : "es"})`
       : "no stretches";
   }
-  if ((goal.items || []).length > 0) {
+  if (itemsOn(goal)) {
     dataStr = itemsSummary(goal);
+  } else if (itemsHaveData(goal)) {
+    const lvl = (goal.correct || 0) + (goal.incorrect || 0) + (goal.intervals || []).length + supAgg.length > 0;
+    dataStr = itemsSummary(goal) + (lvl ? `; overall ${dataStr}` : "");
   }
 
   if (!goalHasData(goal)) {
@@ -3098,7 +3129,7 @@ function SummaryLine({ goal, index }) {
 }
 
 function applyTap(goal, field, delta, onUpdate) {
-  const hasItems = (goal.items || []).length > 0;
+  const hasItems = itemsOn(goal);
   const selSup = goal.usedSupport || "ind";
   const wrSup = goal.support || "ind";
   const offLevel = false;
@@ -3135,7 +3166,7 @@ function applyTap(goal, field, delta, onUpdate) {
 function CompactLine({ goal, index, onTap, at, onUpdate, missed }) {
   const [itemMenu, setItemMenu] = useState(false);
   let s;
-  const hasIt = (goal.items || []).length > 0;
+  const hasIt = itemsOn(goal);
   const aiC = hasIt ? Math.min(goal.activeItem || 0, goal.items.length - 1) : 0;
   if (goal.type === "bites") {
     const best = (goal.items || []).reduce((m, it) => Math.max(m, longestRun(it)), 0);
@@ -4039,6 +4070,8 @@ function App() {
         targetOf: t.targetOf,
         items: t.items,
         oneTry: t.oneTry,
+        itemsOff: t.itemsOff,
+        itemsHidden: t.itemsHidden,
         status: t.status, outcome: t.outcome, reason: t.reason, changedAt: t.changedAt, replacesTid: t.replacesTid,
         matId: t.matId,
         matTweak: t.matTweak,
@@ -4161,7 +4194,7 @@ function App() {
         ? `${correct}/${total} — ${pct ?? "—"}% accuracy`
         : timerLabel ? `${total}x / ${timerLabel}` : `${total}x`;
       const supAgg = Object.entries(g.sup || {}).filter(([c2, b]) => (b.c || 0) + (b.i || 0) > 0);
-      if (supAgg.length > 0 && g.type !== "duration" && (g.items || []).length === 0) {
+      if (supAgg.length > 0 && g.type !== "duration" && !itemsOn(g)) {
         const wr = g.support || "ind";
         const acc = new Set(["ind", "sp", wr, ...(g.supportOk || [])]);
         const parts = [];
@@ -4175,7 +4208,7 @@ function App() {
         const accC = correct + supAgg.reduce((s, [cd, b]) => s + (acc.has(cd) ? (b.c || 0) : 0), 0);
         dataStr = parts.join(", ") + (g.type === "percent" ? `; ${accC}/${allT} — ${allT > 0 ? Math.round((accC / allT) * 100) : 0}% at level` : `; ${accC}x at level`);
       }
-      if ((g.intervals || []).length > 0 && (g.items || []).length === 0) {
+      if ((g.intervals || []).length > 0 && !itemsOn(g)) {
         const ivs = [...g.intervals, { c: correct, i: incorrect }].filter(iv => (iv.c || 0) + (iv.i || 0) > 0);
         const tc2 = ivs.reduce((s, iv) => s + (iv.c || 0), 0);
         const tt2 = ivs.reduce((s, iv) => s + (iv.c || 0) + (iv.i || 0), 0);
@@ -4201,8 +4234,11 @@ function App() {
           ? `longest ${formatTime(Math.max(...g.durations))} (${g.durations.length} stretch${g.durations.length === 1 ? "" : "es"})`
           : "no stretches";
       }
-      if ((g.items || []).length > 0) {
+      if (itemsOn(g)) {
         dataStr = itemsSummary(g);
+      } else if (itemsHaveData(g)) {
+        const lvl = (g.correct || 0) + (g.incorrect || 0) + (g.intervals || []).length + Object.keys(g.sup || {}).length > 0;
+        dataStr = itemsSummary(g) + (lvl ? `; overall ${dataStr}` : "");
       }
       let line = `${label} — ${dataStr}`;
       if ((g.higher || "").trim()) line += ` (with less help: ${g.higher.trim()})`;
@@ -4253,7 +4289,7 @@ function App() {
         ? `${correct}/${total} — ${pct ?? "—"}% accuracy`
         : timerLabel ? `${total}x / ${timerLabel}` : `${total}x`;
       const supAgg = Object.entries(g.sup || {}).filter(([c2, b]) => (b.c || 0) + (b.i || 0) > 0);
-      if (supAgg.length > 0 && g.type !== "duration" && (g.items || []).length === 0) {
+      if (supAgg.length > 0 && g.type !== "duration" && !itemsOn(g)) {
         const wr = g.support || "ind";
         const acc = new Set(["ind", "sp", wr, ...(g.supportOk || [])]);
         const parts = [];
@@ -4267,7 +4303,7 @@ function App() {
         const accC = correct + supAgg.reduce((s, [cd, b]) => s + (acc.has(cd) ? (b.c || 0) : 0), 0);
         dataStr = parts.join(", ") + (g.type === "percent" ? `; ${accC}/${allT} — ${allT > 0 ? Math.round((accC / allT) * 100) : 0}% at level` : `; ${accC}x at level`);
       }
-      if ((g.intervals || []).length > 0 && (g.items || []).length === 0) {
+      if ((g.intervals || []).length > 0 && !itemsOn(g)) {
         const ivs = [...g.intervals, { c: correct, i: incorrect }].filter(iv => (iv.c || 0) + (iv.i || 0) > 0);
         const tc2 = ivs.reduce((s, iv) => s + (iv.c || 0), 0);
         const tt2 = ivs.reduce((s, iv) => s + (iv.c || 0) + (iv.i || 0), 0);
@@ -4293,8 +4329,11 @@ function App() {
           ? `longest ${formatTime(Math.max(...g.durations))} (${g.durations.length} stretch${g.durations.length === 1 ? "" : "es"})`
           : "no stretches";
       }
-      if ((g.items || []).length > 0) {
+      if (itemsOn(g)) {
         dataStr = itemsSummary(g);
+      } else if (itemsHaveData(g)) {
+        const lvl = (g.correct || 0) + (g.incorrect || 0) + (g.intervals || []).length + Object.keys(g.sup || {}).length > 0;
+        dataStr = itemsSummary(g) + (lvl ? `; overall ${dataStr}` : "");
       }
       let line = `${label} — ${dataStr}`;
       if ((g.higher || "").trim()) line += ` (with less help: ${g.higher.trim()})`;
@@ -4460,13 +4499,15 @@ function App() {
               base.incorrect = 0;
               return base;
             }
-            if ((g.items || []).length > 0) {
+            if ((g.items || []).length > 0 && (itemsOn(g) || itemsHaveData(g))) {
               const its = g.items
                 .filter(it => (it.correct || 0) + (it.incorrect || 0) > 0 || it.att)
                 .map(it => ({ name: it.name, correct: it.correct || 0, incorrect: it.incorrect || 0 }));
               base.items = its;
-              base.correct = its.reduce((s, it) => s + it.correct, 0);
-              base.incorrect = its.reduce((s, it) => s + it.incorrect, 0);
+              // Items paused: keep the per-item taps from earlier and add the overall count on top.
+              const extraC = itemsOn(g) ? 0 : base.correct, extraI = itemsOn(g) ? 0 : base.incorrect;
+              base.correct = its.reduce((s, it) => s + it.correct, 0) + extraC;
+              base.incorrect = its.reduce((s, it) => s + it.incorrect, 0) + extraI;
             }
             return base;
           });
