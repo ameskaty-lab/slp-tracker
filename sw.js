@@ -1,4 +1,4 @@
-const CACHE_NAME = "slp-tracker-v50";
+const CACHE_NAME = "slp-tracker-v51";
 const URLS_TO_CACHE = [
   "./",
   "./index.html",

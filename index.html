@@ -4077,7 +4077,7 @@ function App() {
         matTweak: t.matTweak,
       });
       const incoming = parsed.students.filter(s => s && typeof s.name === "string" && s.name.trim());
-      let added = 0, merged = 0, newSessions = 0;
+      let added = 0, merged = 0, newSessions = 0, linksAdded = 0, settingsChanged = 0;
       const newRoster = [...roster];
       incoming.forEach(s => {
         const inGoals = (Array.isArray(s.goals) ? s.goals : []).map(cleanGoal);
@@ -4129,6 +4129,10 @@ function App() {
           firstName: local.firstName || (typeof s.firstName === "string" ? s.firstName : ""),
           pron: local.pron || (typeof s.pron === "string" ? s.pron : ""),
           perMonth: typeof s.perMonth === "number" ? s.perMonth : (local.perMonth || 0) };
+        const nr = newRoster[idx];
+        if ((nr.docId || "") !== (local.docId || "")) linksAdded++;
+        if ((nr.updateDocId || "") !== (local.updateDocId || "")) linksAdded++;
+        if ((nr.firstName || "") !== (local.firstName || "") || (nr.pron || "") !== (local.pron || "") || (nr.perMonth || 0) !== (local.perMonth || 0)) settingsChanged++;
         if (extra.length > 0 || localGoals.length > beforeLen || updatedTpl || building !== (local.building || "") || owed.length !== owedOf(local).length) merged++;
         newSessions += extra.length;
       });
@@ -4148,11 +4152,11 @@ function App() {
         });
       }
       const libAdded = newLib.length - matLib.length;
-      if (added === 0 && merged === 0 && libAdded === 0 && schedFilled === 0) {
+      if (added === 0 && merged === 0 && libAdded === 0 && schedFilled === 0 && linksAdded === 0 && settingsChanged === 0) {
         return { ok: false, text: "Nothing new in that code (already in sync?)" };
       }
       setStore(prev => ({ ...prev, roster: newRoster, matLib: newLib, schedule: newSchedule }));
-      return { ok: true, text: `✓ ${added} added, ${merged} merged, ${newSessions} session${newSessions === 1 ? "" : "s"} synced` };
+      return { ok: true, text: `✓ ${added} added, ${merged} merged, ${newSessions} session${newSessions === 1 ? "" : "s"} synced${linksAdded ? `, ${linksAdded} Doc link${linksAdded === 1 ? "" : "s"} added` : ""}` };
     } catch {
       return { ok: false, text: "That doesn't look like a roster code — paste the whole thing" };
     }
