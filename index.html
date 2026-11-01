@@ -1726,7 +1726,7 @@ function MonthlyUpdates({ roster, monthly, setMonthly, onLoadDoc, onSetFirstName
   );
 }
 
-function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, schedule, setDayIds, matLib, setLib, onOpenStudent, onClose, sessions, onToggleAbsent, doneIds, onUndoDone, onClinicianAbsent, onApplyGoals, onRestoreGoal, onDeleteArchived, onSendMonth, initialTab, monthly, setMonthly, onLoadMonthly, onSetFirstName, monthlyStatus, onSendUpdate, onLinkUpdateDoc, onSetPerMonth }) {
+function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, schedule, setDayIds, matLib, setLib, onOpenStudent, onClose, sessions, onToggleAbsent, doneIds, onUndoDone, onClinicianAbsent, onApplyGoals, onRestoreGoal, onDeleteArchived, onSendMonth, initialTab, monthly, setMonthly, onLoadMonthly, onSetFirstName, monthlyStatus, onSendUpdate, onLinkUpdateDoc, onSetPerMonth, archivedStudents }) {
   const [tab, setTab] = useState(initialTab || "today");
   const wd = new Date().getDay();
   const [day, setDay] = useState(wd >= 1 && wd <= 5 ? wd : 1);
@@ -1939,7 +1939,7 @@ function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, 
           )}
 
           {tab === "updates" && (
-            <MonthlyUpdates roster={roster} monthly={monthly || {}} setMonthly={setMonthly} onLoadDoc={onLoadMonthly} onSetFirstName={onSetFirstName} status={monthlyStatus} onSendUpdate={onSendUpdate} onLinkUpdateDoc={onLinkUpdateDoc} />
+            <MonthlyUpdates roster={[...roster, ...(archivedStudents || []).map(s => ({ ...s, building: `${(s.building || "").trim() || "No building"} (archived)` }))]} monthly={monthly || {}} setMonthly={setMonthly} onLoadDoc={onLoadMonthly} onSetFirstName={onSetFirstName} status={monthlyStatus} onSendUpdate={onSendUpdate} onLinkUpdateDoc={onLinkUpdateDoc} />
           )}
           {tab === "goals" && (() => {
             const md = reviewMonth();
@@ -4697,14 +4697,15 @@ function App() {
           monthly={store.monthly || {}}
           setMonthly={(fn) => setStore(prev => ({ ...prev, monthly: fn(prev.monthly || {}) }))}
           onLoadMonthly={(docId) => runDocJob({ kind: "loadMonthly", sid: "monthly", docId })}
-          onSetFirstName={(id, fn) => setStore(prev => ({ ...prev, roster: prev.roster.map(s => s.id === id ? { ...s, firstName: fn } : s) }))}
+          archivedStudents={store.archivedStudents || []}
+          onSetFirstName={(id, fn) => setStore(prev => ({ ...prev, roster: prev.roster.map(s => s.id === id ? { ...s, firstName: fn } : s), archivedStudents: (prev.archivedStudents || []).map(s => s.id === id ? { ...s, firstName: fn } : s) }))}
           monthlyStatus={docStatus && docStatus.sid === "monthly" ? docStatus : null}
           onSendUpdate={(it, tables, already) => {
             if (already && !window.confirm("This update is already in the parent Doc. Send it again?")) return;
             runDocJob({ kind: "update", sid: "monthly", key: it.key, docId: it.student.updateDocId, title: it.title, tables, force: already });
           }}
           onSetPerMonth={(id, n) => setStore(prev => ({ ...prev, roster: prev.roster.map(s => s.id === id ? { ...s, perMonth: n } : s) }))}
-          onLinkUpdateDoc={(id, docId) => setStore(prev => ({ ...prev, roster: prev.roster.map(s => s.id === id ? { ...s, updateDocId: docId } : s) }))}
+          onLinkUpdateDoc={(id, docId) => setStore(prev => ({ ...prev, roster: prev.roster.map(s => s.id === id ? { ...s, updateDocId: docId } : s), archivedStudents: (prev.archivedStudents || []).map(s => s.id === id ? { ...s, updateDocId: docId } : s) }))}
           onClose={() => { setShowPlan(false); setPlanTab(null); }}
         />
       )}
