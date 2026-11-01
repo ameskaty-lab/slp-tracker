@@ -3400,8 +3400,10 @@ function StudentBar({ roster, todayStudents, doneStudents, selectedId, onSelect,
   );
 }
 
-function RosterPanel({ roster, onRename, onDelete, onMove, onShare, onImport, onClose, shareStatus, onSetBuilding, onLinkDoc }) {
+function RosterPanel({ roster, onRename, onDelete, onMove, onShare, onImport, onClose, shareStatus, onSetBuilding, onLinkDoc, archived, onArchive, onRestore }) {
   const [importText, setImportText] = useState("");
+  const [archiving, setArchiving] = useState(null); // { ids, label }
+  const [showArchived, setShowArchived] = useState(false);
   const [placing, setPlacing] = useState(null);
   const [importMsg, setImportMsg] = useState(null);
   const [renaming, setRenaming] = useState(null);
@@ -3435,6 +3437,15 @@ function RosterPanel({ roster, onRename, onDelete, onMove, onShare, onImport, on
           buildings={buildingNames(roster)}
           onSubmit={(_, b) => { onSetBuilding(placing.id, b); setPlacing(null); }}
           onCancel={() => setPlacing(null)}
+        />
+      )}
+      {archiving && (
+        <ConfirmModal
+          message={`Archive ${archiving.label}? They'll be hidden everywhere in the app, but all goals, history and Doc links are kept. You can restore them any time from "Archived" at the bottom of this list.`}
+          confirmLabel="Archive"
+          confirmColor="#64748b"
+          onConfirm={() => { onArchive(archiving.ids); setArchiving(null); }}
+          onCancel={() => setArchiving(null)}
         />
       )}
       {deleting && (
@@ -3494,12 +3505,57 @@ function RosterPanel({ roster, onRename, onDelete, onMove, onShare, onImport, on
             background: "#f8fafc", color: "#64748b", fontSize: 12, fontWeight: 700,
             cursor: "pointer", fontFamily: "inherit",
           }}>Rename</button>
+          <button onClick={() => setArchiving({ ids: [s.id], label: s.name })} title="Archive (hide, keep everything)" style={{
+            padding: "4px 7px", borderRadius: 7, border: "1.5px solid #e2e8f0",
+            background: "#f8fafc", color: "#64748b", fontSize: 12, fontWeight: 700, cursor: "pointer",
+          }}>📦</button>
           <button onClick={() => setDeleting(s)} style={{
             padding: "4px 8px", borderRadius: 7, border: "1.5px solid #fecaca",
             background: "#fff5f5", color: "#ef4444", fontSize: 12, fontWeight: 700, cursor: "pointer",
           }}>✕</button>
         </div>
       ))}
+
+      {buildingNames(roster).length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#94a3b8", marginBottom: 6 }}>📦 Archive a whole building</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {buildingNames(roster).map(b => {
+              const ids = roster.filter(s => (s.building || "").trim() === b).map(s => s.id);
+              return (
+                <button key={b} onClick={() => setArchiving({ ids, label: `all ${ids.length} student${ids.length === 1 ? "" : "s"} in ${b}` })} style={{
+                  padding: "5px 10px", borderRadius: 999, border: "1.5px solid #e2e8f0", background: "#f8fafc",
+                  color: "#475569", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+                }}>{b} ({ids.length})</button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {(archived || []).length > 0 && (
+        <div style={{ marginTop: 12, background: "#f8fafc", border: "1.5px solid #e2e8f0", borderRadius: 10, padding: "8px 10px" }}>
+          <button onClick={() => setShowArchived(v => !v)} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 800, color: "#64748b", width: "100%", textAlign: "left" }}>
+            📦 Archived ({archived.length}) {showArchived ? "▲" : "▼"}
+          </button>
+          {showArchived && groupByBuilding(archived).map(g => (
+            <div key={g.building} style={{ marginTop: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 1, flex: 1 }}>{g.building}</span>
+                {g.students.length > 1 && <button onClick={() => onRestore(g.students.map(s => s.id))} style={{ padding: "2px 8px", borderRadius: 999, border: "1.5px solid #c7d2fe", background: "#eef2ff", color: "#4f46e5", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Restore all</button>}
+              </div>
+              {g.students.map(s => (
+                <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 0" }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: "#475569", flex: 1 }}>{s.name}
+                    <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 500 }}> · {(s.history || []).length} session{(s.history || []).length === 1 ? "" : "s"}{s.archivedAt ? ` · archived ${new Date(s.archivedAt).toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "2-digit" })}` : ""}</span>
+                  </span>
+                  <button onClick={() => onRestore([s.id])} style={{ padding: "3px 9px", borderRadius: 7, border: "1.5px solid #c7d2fe", background: "#eef2ff", color: "#4f46e5", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Restore</button>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
 
       <div style={{ marginTop: 12 }}>
         <button onClick={onShare} disabled={roster.length === 0} style={{
@@ -3604,7 +3660,10 @@ function planFields(parsed) {
   const dayDone = (dd && typeof dd.date === "string" && Array.isArray(dd.ids))
     ? { date: dd.date, ids: dd.ids.filter(x => typeof x === "string") } : null;
   const monthly = (parsed.monthly && typeof parsed.monthly === "object" && !Array.isArray(parsed.monthly)) ? parsed.monthly : {};
-  return { matLib, schedule, dayOverride, dayDone, monthly };
+  const archivedStudents = (Array.isArray(parsed.archivedStudents) ? parsed.archivedStudents : [])
+    .filter(s => s && typeof s.id === "string" && typeof s.name === "string")
+    .map(s => ({ ...s, history: Array.isArray(s.history) ? s.history : [], goals: Array.isArray(s.goals) ? s.goals : [] }));
+  return { matLib, schedule, dayOverride, dayDone, monthly, archivedStudents };
 }
 
 function App() {
@@ -4006,6 +4065,7 @@ function App() {
     const payload = JSON.stringify({
       slpRoster: 1,
       students: roster.map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "", owed: owedOf(s), archived: s.archived || [], docId: s.docId || "", updateDocId: s.updateDocId || "", firstName: s.firstName || "", pron: s.pron || "", perMonth: s.perMonth || 0 })),
+      archivedStudents: (store.archivedStudents || []).map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "", owed: owedOf(s), archived: s.archived || [], docId: s.docId || "", updateDocId: s.updateDocId || "", firstName: s.firstName || "", pron: s.pron || "", perMonth: s.perMonth || 0, archivedAt: s.archivedAt || "" })),
       matLib,
       schedule: Object.fromEntries(WEEKDAYS.map(({ d }) => [d, ((store.schedule || {})[d] || []).map(id => (roster.find(s => s.id === id) || {}).name).filter(Boolean)])),
     });
@@ -4136,6 +4196,16 @@ function App() {
         if (extra.length > 0 || localGoals.length > beforeLen || updatedTpl || building !== (local.building || "") || owed.length !== owedOf(local).length) merged++;
         newSessions += extra.length;
       });
+      // Archived students from the other device: keep a copy here too (never un-archives or removes anything).
+      const newArchived = [...(store.archivedStudents || [])];
+      let archAdded = 0;
+      (Array.isArray(parsed.archivedStudents) ? parsed.archivedStudents : []).forEach(a => {
+        if (!a || typeof a.name !== "string" || !a.name.trim()) return;
+        const nm = a.name.trim().toLowerCase();
+        if (newRoster.some(r => r.name.trim().toLowerCase() === nm) || newArchived.some(r => r.name.trim().toLowerCase() === nm)) return;
+        newArchived.push({ ...a, id: makeId("student"), name: a.name.trim(), goals: (Array.isArray(a.goals) ? a.goals : []).map(cleanGoal), history: Array.isArray(a.history) ? a.history : [] });
+        archAdded++;
+      });
       // Materials sets: add any this device doesn't have yet.
       const inLib = (Array.isArray(parsed.matLib) ? parsed.matLib : []).filter(m => m && typeof m.id === "string");
       const newLib = [...matLib];
@@ -4152,11 +4222,11 @@ function App() {
         });
       }
       const libAdded = newLib.length - matLib.length;
-      if (added === 0 && merged === 0 && libAdded === 0 && schedFilled === 0 && linksAdded === 0 && settingsChanged === 0) {
+      if (added === 0 && merged === 0 && libAdded === 0 && schedFilled === 0 && linksAdded === 0 && settingsChanged === 0 && archAdded === 0) {
         return { ok: false, text: "Nothing new in that code (already in sync?)" };
       }
-      setStore(prev => ({ ...prev, roster: newRoster, matLib: newLib, schedule: newSchedule }));
-      return { ok: true, text: `✓ ${added} added, ${merged} merged, ${newSessions} session${newSessions === 1 ? "" : "s"} synced${linksAdded ? `, ${linksAdded} Doc link${linksAdded === 1 ? "" : "s"} added` : ""}` };
+      setStore(prev => ({ ...prev, roster: newRoster, matLib: newLib, schedule: newSchedule, archivedStudents: newArchived }));
+      return { ok: true, text: `✓ ${added} added, ${merged} merged, ${newSessions} session${newSessions === 1 ? "" : "s"} synced${linksAdded ? `, ${linksAdded} Doc link${linksAdded === 1 ? "" : "s"} added` : ""}${archAdded ? `, ${archAdded} archived` : ""}` };
     } catch {
       return { ok: false, text: "That doesn't look like a roster code — paste the whole thing" };
     }
@@ -4690,6 +4760,18 @@ function App() {
           shareStatus={shareStatus}
           onSetBuilding={(id, b) => setStudentField(id, "building", b)}
           onLinkDoc={(id) => setLinkingDoc({ sid: id, then: null })}
+          archived={store.archivedStudents || []}
+          onArchive={(ids) => setStore(prev => {
+            const set = new Set(ids);
+            const moving = prev.roster.filter(s => set.has(s.id)).map(s => ({ ...s, archivedAt: new Date().toISOString() }));
+            return { ...prev, roster: prev.roster.filter(s => !set.has(s.id)), archivedStudents: [...(prev.archivedStudents || []), ...moving],
+              selectedId: set.has(prev.selectedId) ? "quick" : prev.selectedId };
+          })}
+          onRestore={(ids) => setStore(prev => {
+            const set = new Set(ids);
+            const back = (prev.archivedStudents || []).filter(s => set.has(s.id)).map(s => { const { archivedAt, ...rest } = s; return rest; });
+            return { ...prev, roster: [...prev.roster, ...back], archivedStudents: (prev.archivedStudents || []).filter(s => !set.has(s.id)) };
+          })}
         />
       )}
 
