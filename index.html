@@ -4735,6 +4735,7 @@ function App() {
         markSent(job.sid);
         rememberGAccount();
         setDocStatus({ sid: job.sid, ok: true, msg: `✓ Added to "${r.title}"` });
+        setAutoNewFor({ sid: job.sid, title: r.title });
       }
     } catch (e) {
       if (e.code === 401) { startGoogleSignIn(job); return; }
@@ -4816,6 +4817,16 @@ function App() {
 
   // New Session: for a student, keep their goal labels but zero the data.
   // For Quick mode, start completely fresh (old behavior).
+  // After a note lands in the Doc, start a fresh session for that student (the note is kept in 🕘 History).
+  const [autoNewFor, setAutoNewFor] = useState(null);
+  useEffect(() => {
+    if (!autoNewFor || !selectedStudent || selectedStudent.id !== autoNewFor.sid || !session.sentToDoc) return;
+    const t = autoNewFor.title;
+    setAutoNewFor(null);
+    handleNewSession();
+    setDocStatus({ sid: selectedStudent.id, ok: true, msg: `✓ Added to "${t}" — note saved in 🕘 History, ready for the next session` });
+  }, [autoNewFor, selectedStudent, session.sentToDoc]);
+
   const handleNewSession = () => {
     // Keep a copy of the note text so it can be found again in 🕘 History.
     let noteText = "";
