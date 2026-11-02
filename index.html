@@ -2681,6 +2681,8 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, onChange, canSkip, index, 
                       <button onClick={() => go("archive")} style={b("#f1f5f9", "#475569")}>Archive (no change note)</button>
                     </>
                   )}
+                  <div style={{ ...sectionLabel, textAlign: "left", margin: "8px 0 6px" }}>Just a placeholder?</div>
+                  <button onClick={() => setConfirm("delete")} style={b("#fff5f5", "#dc2626")}>🗑 Delete — no note, no archive</button>
                 </>
               );
             })()}
@@ -2691,6 +2693,14 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, onChange, canSkip, index, 
             }}>Cancel</button>
           </div>
         </div>
+      )}
+      {confirm === "delete" && (
+        <ConfirmModal
+          message={`Delete "${goal.label || "this goal"}"? It just disappears — nothing goes in the note, the goal list, or the archive. Use this for placeholder goals.`}
+          confirmLabel="Delete"
+          onConfirm={() => { onRemove(goal.id); setConfirm(null); }}
+          onCancel={() => setConfirm(null)}
+        />
       )}
       {confirm === "achieve" && (
         <AchieveModal goal={goal} otherGoalTexts={otherGoalTexts}
