@@ -3895,7 +3895,7 @@ function loadStore() {
         const sessions = {};
         Object.keys(parsed.sessions).forEach(k => {
           const sess = parsed.sessions[k] || {};
-          sessions[k] = { goals: (sess.goals || []).map(normalizeGoalFields), reinforcers: sess.reinforcers || "", parentNote: sess.parentNote || "", startedAt: sess.startedAt || null, bcbaInclude: !!sess.bcbaInclude, absent: !!sess.absent, absentReason: sess.absentReason || "", absentDate: sess.absentDate || "", makeupFor: sess.makeupFor || "", absentBy: sess.absentBy === "clinician" ? "clinician" : "", goalUpdates: Array.isArray(sess.goalUpdates) ? sess.goalUpdates.filter(u => u && typeof u.text === "string") : [] };
+          sessions[k] = { goals: (sess.goals || []).map(normalizeGoalFields), reinforcers: sess.reinforcers || "", parentNote: sess.parentNote || "", startedAt: sess.startedAt || null, bcbaInclude: !!sess.bcbaInclude, absent: !!sess.absent, absentReason: sess.absentReason || "", absentDate: sess.absentDate || "", makeupFor: sess.makeupFor || "", absentBy: sess.absentBy === "clinician" ? "clinician" : "", goalUpdates: Array.isArray(sess.goalUpdates) ? sess.goalUpdates.filter(u => u && typeof u.text === "string") : [], sentToDoc: !!sess.sentToDoc, copied: !!sess.copied };
         });
         return { roster, selectedId: parsed.selectedId || "quick", sessions, ...planFields(parsed) };
       }
@@ -4333,6 +4333,7 @@ function App() {
       name: selectedStudent.name,
       goals: selectedStudent.goals || [],
       history: selectedStudent.history || [],
+      notes: (selectedStudent.notesLog || []).slice(-30),
     };
     const data = encodeURIComponent(btoa(unescape(encodeURIComponent(JSON.stringify(payload)))));
     const url = `history.html#${data}`;
@@ -4788,6 +4789,7 @@ function App() {
     } catch {}
   };
 
+  const markCopied = () => setSession(prev => (prev.copied ? prev : { ...prev, copied: true }));
   const handleCopy = async () => {
     const html = buildSummaryHTML();
     const text = buildSummaryPlainText();
@@ -4801,12 +4803,12 @@ function App() {
       } else {
         await navigator.clipboard.writeText(text);
       }
-      setCopied(true);
+      setCopied(true); markCopied();
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       try {
         await navigator.clipboard.writeText(text);
-        setCopied(true);
+        setCopied(true); markCopied();
         setTimeout(() => setCopied(false), 2000);
       } catch {}
     }
@@ -4815,6 +4817,13 @@ function App() {
   // New Session: for a student, keep their goal labels but zero the data.
   // For Quick mode, start completely fresh (old behavior).
   const handleNewSession = () => {
+    // Keep a copy of the note text so it can be found again in 🕘 History.
+    let noteText = "";
+    try { noteText = selectedStudent ? buildSummaryPlainText().trim() : ""; } catch {}
+    const noteHasBody = noteText.split("\n").filter(l => l.trim()).length > 1;
+    if (selectedStudent && noteHasBody && !session.copied && !session.sentToDoc) {
+      if (!window.confirm("This note hasn't been copied or sent to the Doc yet. Start a new session anyway?\n\n(Don't worry — it'll be saved in 🕘 History.)")) return;
+    }
     setShowSummary(false);
     setMakeupOpen(false);
     setDocStatus(null);
@@ -4870,7 +4879,10 @@ function App() {
             ? [...(s.history || []), { date: cur.startedAt || new Date().toISOString(), goals: logged }].slice(-40)
             : (s.history || []);
           const owed = cur.makeupFor && !cur.absent ? owedOf(s).filter(d => d !== cur.makeupFor) : owedOf(s);
-          return { ...s, history, owed, lastParentNote: (cur.parentNote || "").trim() || s.lastParentNote || "" };
+          const notesLog = noteHasBody
+            ? [...(s.notesLog || []), { date: cur.startedAt || new Date().toISOString(), text: noteText, sent: !!cur.sentToDoc, copied: !!cur.copied }].slice(-60)
+            : (s.notesLog || []);
+          return { ...s, history, owed, notesLog, lastParentNote: (cur.parentNote || "").trim() || s.lastParentNote || "" };
         });
       }
       const goals = prev.selectedId === "quick"

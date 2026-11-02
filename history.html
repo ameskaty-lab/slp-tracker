@@ -24,6 +24,13 @@
   .month { background: #f1f5f9; font-weight: 700; }
   .month td { font-family: inherit; font-size: 12px; color: #475569; }
   .empty { text-align: center; color: #94a3b8; padding: 60px 30px; font-size: 14px; line-height: 1.6; }
+  .notes { margin: 14px 14px 0; }
+  .ncard { background: #fff; border: 2px solid #e2e8f0; border-radius: 14px; padding: 12px 14px; margin-bottom: 10px; }
+  .ncard .d { font-size: 12px; font-weight: 800; color: #4f46e5; display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .ncard .d .tag { font-size: 10px; font-weight: 700; color: #94a3b8; }
+  .ncard pre { white-space: pre-wrap; font-family: inherit; font-size: 13px; color: #334155; margin: 0; line-height: 1.45; }
+  .cbtn { margin-left: auto; background: #4f46e5; color: #fff; border: none; border-radius: 8px; padding: 5px 12px; font-weight: 700; font-size: 12px; cursor: pointer; font-family: inherit; }
+  .sect { font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #94a3b8; margin: 4px 2px 8px; }
   .note { font-size: 11px; color: #94a3b8; text-align: center; margin: 16px 20px 0; line-height: 1.5; }
 </style>
 </head>
@@ -92,12 +99,44 @@
     var tplByTid = {};
     templates.forEach(function (t) { tplByTid[t.tid] = t; });
 
-    if (history.length === 0) {
+    if (history.length === 0 && !(data.notes || []).length) {
       content.innerHTML = '<div class="empty">No sessions logged yet.<br/>Sessions are saved each time you tap <b>New Session</b> in the tracker with data on the board.</div>';
       return;
     }
 
     var html = "";
+    // Saved notes (newest first), plus data-only rebuilds for recent sessions saved before notes were kept.
+    var notes = Array.isArray(data.notes) ? data.notes.slice() : [];
+    var noteDays = {};
+    notes.forEach(function (n) { noteDays[new Date(n.date).toDateString()] = true; });
+    var items = notes.map(function (n) { return { date: n.date, text: n.text, tag: n.sent ? "sent to Doc" : n.copied ? "copied" : "not sent" }; });
+    history.slice(-10).forEach(function (h) {
+      if (noteDays[new Date(h.date).toDateString()]) return;
+      var d = new Date(h.date);
+      var lines = [isNaN(d) ? "?" : d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })];
+      (h.goals || []).forEach(function (g, i) {
+        var lbl = (byTid[g.tid] && byTid[g.tid].label) || g.label || ("Goal " + (i + 1));
+        var c = g.correct || 0, t = c + (g.incorrect || 0), s2;
+        if (g.type === "bites") s2 = "best " + c + " in a row";
+        else if (g.type === "duration") s2 = Math.floor((g.duration || 0) / 60) + ":" + ("0" + ((g.duration || 0) % 60)).slice(-2) + " longest";
+        else if (g.type === "tally") s2 = c + "x";
+        else s2 = c + "/" + t + (t ? " — " + Math.round(c / t * 100) + "% accuracy" : "");
+        if (g.items && g.items.length && g.type !== "bites") s2 = g.items.map(function (it) { var tt = (it.correct || 0) + (it.incorrect || 0); return it.name + " " + (g.type === "tally" ? (it.correct || 0) + "x" : (it.correct || 0) + "/" + tt); }).join(", ");
+        lines.push(lbl + " — " + s2);
+      });
+      items.push({ date: h.date, text: lines.join("\n"), tag: "data only — note text wasn't saved" });
+    });
+    items.sort(function (a, b) { return new Date(b.date) - new Date(a.date); });
+    if (items.length) {
+      html += '<div class="notes"><div class="sect">Session notes</div>';
+      items.forEach(function (it, i) {
+        var d = new Date(it.date);
+        html += '<div class="ncard"><div class="d">' + esc(isNaN(d) ? "?" : d.toLocaleDateString("en-US", { month: "numeric", day: "numeric" })) +
+          ' <span class="tag">' + esc(it.tag) + '</span><button class="cbtn" data-i="' + i + '">Copy</button></div><pre>' + esc(it.text) + '</pre></div>';
+      });
+      html += '</div><div class="sect" style="margin:14px 16px 0">Data by goal</div>';
+    }
+    window.__notes = items;
     order.forEach(function (tid, gi) {
       var g = byTid[tid];
       if (g.points.length === 0 && !tplByTid[tid]) return;
@@ -161,6 +200,13 @@
     });
     html += '<div class="note">Read-only snapshot from the tracker. Data lives on the device you opened this from.</div>';
     content.innerHTML = html;
+    Array.prototype.forEach.call(document.querySelectorAll(".cbtn"), function (b) {
+      b.addEventListener("click", function () {
+        var it = window.__notes[Number(b.getAttribute("data-i"))];
+        var done = function () { b.textContent = "✓ Copied"; setTimeout(function () { b.textContent = "Copy"; }, 2000); };
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(it.text).then(done, function () {});
+      });
+    });
   }
 
   var curMonthKey = null;
