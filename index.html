@@ -656,6 +656,26 @@ function autoSupport(g) {
   return g;
 }
 
+// Bring an open session's goals in line with the student's saved goal list, keeping any data already taken.
+const TPL_KEYS = ["label", "type", "timerDuration", "fullGoal", "target", "targetOf", "ruleMode", "ruleN", "support", "supportSet", "supportOk", "biteTarget", "oneTry", "itemsOff", "itemsHidden", "status", "outcome", "reason", "changedAt", "replacesTid", "prevStatus", "matId", "matTweak"];
+function syncSessionGoals(sessGoals, templates) {
+  const byTid = {};
+  (sessGoals || []).forEach(g => { byTid[g.tid] = g; });
+  const used = new Set();
+  const out = (templates || []).map(t => {
+    const fresh = goalFromTemplate(t);
+    const ex = byTid[t.tid];
+    if (!ex) return fresh;
+    used.add(t.tid);
+    const merged = { ...ex };
+    TPL_KEYS.forEach(k => { merged[k] = fresh[k]; });
+    if (!itemsHaveData(ex)) merged.items = fresh.items;
+    return merged;
+  });
+  (sessGoals || []).forEach(g => { if (!used.has(g.tid) && goalHasData(g)) out.push(g); });
+  return out;
+}
+
 function templatesFromGoals(goals) {
   return goals.map(g => ({
     tid: g.tid,
@@ -4022,9 +4042,12 @@ function App() {
       const sessions = { ...prev.sessions, [prev.selectedId]: next };
       let roster = prev.roster;
       if (prev.selectedId !== "quick") {
-        roster = prev.roster.map(s =>
-          s.id === prev.selectedId ? { ...s, goals: templatesFromGoals(next.goals) } : s
-        );
+        roster = prev.roster.map(s => {
+          if (s.id !== prev.selectedId) return s;
+          const tpl = templatesFromGoals(next.goals);
+          const changed = JSON.stringify(tpl) !== JSON.stringify(templatesFromGoals(s.goals || []));
+          return { ...s, goals: tpl, ...(changed ? { goalsAt: Date.now() } : {}) };
+        });
       }
       return { ...prev, sessions, roster };
     });
@@ -4346,7 +4369,7 @@ function App() {
   const shareRoster = async () => {
     const payload = JSON.stringify({
       slpRoster: 1,
-      students: roster.map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "", owed: owedOf(s), archived: s.archived || [], docId: s.docId || "", updateDocId: s.updateDocId || "", firstName: s.firstName || "", pron: s.pron || "", perMonth: s.perMonth || 0 })),
+      students: roster.map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "", owed: owedOf(s), archived: s.archived || [], docId: s.docId || "", updateDocId: s.updateDocId || "", firstName: s.firstName || "", pron: s.pron || "", perMonth: s.perMonth || 0, goalsAt: s.goalsAt || 0 })),
       archivedStudents: (store.archivedStudents || []).map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "", owed: owedOf(s), archived: s.archived || [], docId: s.docId || "", updateDocId: s.updateDocId || "", firstName: s.firstName || "", pron: s.pron || "", perMonth: s.perMonth || 0, archivedAt: s.archivedAt || "" })),
       matLib,
       schedule: Object.fromEntries(WEEKDAYS.map(({ d }) => [d, ((store.schedule || {})[d] || []).map(id => (roster.find(s => s.id === id) || {}).name).filter(Boolean)])),
@@ -4420,6 +4443,7 @@ function App() {
       });
       const incoming = parsed.students.filter(s => s && typeof s.name === "string" && s.name.trim());
       let added = 0, merged = 0, newSessions = 0, linksAdded = 0, settingsChanged = 0;
+      const goalsSynced = [];
       const newRoster = [...roster];
       incoming.forEach(s => {
         const inGoals = (Array.isArray(s.goals) ? s.goals : []).map(cleanGoal);
@@ -4434,11 +4458,24 @@ function App() {
           return;
         }
         const local = newRoster[idx];
-        const localGoals = [...(local.goals || [])];
+        let localGoals = [...(local.goals || [])];
         const beforeLen = localGoals.length;
         let updatedTpl = false;
         const tidMap = {};
-        inGoals.forEach(ig => {
+        const inAt = typeof s.goalsAt === "number" ? s.goalsAt : 0;
+        if (inAt > (local.goalsAt || 0)) {
+          // The other device changed this goal list more recently: use its list (achieved, new, deleted goals all carry over).
+          const pool = [...localGoals];
+          localGoals = inGoals.map(ig => {
+            let m = pool.find(lg => lg.tid === ig.tid) || (ig.label.trim() && pool.find(lg => (lg.label || "").trim().toLowerCase() === ig.label.trim().toLowerCase()));
+            if (m) pool.splice(pool.indexOf(m), 1);
+            const tid = m ? m.tid : ig.tid;
+            tidMap[ig.tid] = tid;
+            return { ...ig, tid };
+          });
+          updatedTpl = JSON.stringify(templatesFromGoals(localGoals)) !== JSON.stringify(templatesFromGoals(local.goals || []));
+          if (updatedTpl) goalsSynced.push(local.id);
+        } else inGoals.forEach(ig => {
           let match = localGoals.find(lg => lg.tid === ig.tid);
           if (!match && ig.label.trim()) {
             match = localGoals.find(lg => (lg.label || "").trim().toLowerCase() === ig.label.trim().toLowerCase());
@@ -4453,6 +4490,7 @@ function App() {
             tidMap[ig.tid] = ig.tid;
           }
         });
+        if (updatedTpl && !goalsSynced.includes(local.id)) goalsSynced.push(local.id);
         const have = new Set((local.history || []).map(h => h.date));
         const extra = inHist
           .filter(h => !have.has(h.date))
@@ -4467,6 +4505,7 @@ function App() {
         inArch.forEach(a => { if (!archived.some(x => x.tid === a.tid)) archived.push(a); });
         const docId = local.docId || (typeof s.docId === "string" ? s.docId : "");
         newRoster[idx] = { ...local, goals: localGoals, history, building, owed, archived, docId,
+          goalsAt: Math.max(inAt, local.goalsAt || 0),
           updateDocId: local.updateDocId || (typeof s.updateDocId === "string" ? s.updateDocId : ""),
           firstName: local.firstName || (typeof s.firstName === "string" ? s.firstName : ""),
           pron: local.pron || (typeof s.pron === "string" ? s.pron : ""),
@@ -4507,7 +4546,14 @@ function App() {
       if (added === 0 && merged === 0 && libAdded === 0 && schedFilled === 0 && linksAdded === 0 && settingsChanged === 0 && archAdded === 0) {
         return { ok: false, text: "Nothing new in that code (already in sync?)" };
       }
-      setStore(prev => ({ ...prev, roster: newRoster, matLib: newLib, schedule: newSchedule, archivedStudents: newArchived }));
+      setStore(prev => {
+        const sessions = { ...prev.sessions };
+        goalsSynced.forEach(id => {
+          const st = newRoster.find(r => r.id === id);
+          if (sessions[id] && st) sessions[id] = { ...sessions[id], goals: syncSessionGoals(sessions[id].goals, st.goals) };
+        });
+        return { ...prev, roster: newRoster, matLib: newLib, schedule: newSchedule, archivedStudents: newArchived, sessions };
+      });
       return { ok: true, text: `✓ ${added} added, ${merged} merged, ${newSessions} session${newSessions === 1 ? "" : "s"} synced${linksAdded ? `, ${linksAdded} Doc link${linksAdded === 1 ? "" : "s"} added` : ""}${archAdded ? `, ${archAdded} archived` : ""}` };
     } catch {
       return { ok: false, text: "That doesn't look like a roster code — paste the whole thing" };
