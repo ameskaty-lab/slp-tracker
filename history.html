@@ -127,14 +127,16 @@
       items.push({ date: h.date, text: lines.join("\n"), tag: "data only — note text wasn't saved" });
     });
     items.sort(function (a, b) { return new Date(b.date) - new Date(a.date); });
+    var notesHtml = "";
     if (items.length) {
-      html += '<div class="notes"><div class="sect">Session notes</div>';
+      notesHtml += '<div class="notes" style="margin-top:20px"><div class="sect">Session notes</div>';
       items.forEach(function (it, i) {
         var d = new Date(it.date);
-        html += '<div class="ncard"><div class="d">' + esc(isNaN(d) ? "?" : d.toLocaleDateString("en-US", { month: "numeric", day: "numeric" })) +
+        notesHtml += '<div class="ncard"><div class="d">' + esc(isNaN(d) ? "?" : d.toLocaleDateString("en-US", { month: "numeric", day: "numeric" })) +
           ' <span class="tag">' + esc(it.tag) + '</span><button class="cbtn" data-i="' + i + '">Copy</button></div><pre>' + esc(it.text) + '</pre></div>';
       });
-      html += '</div><div class="sect" style="margin:14px 16px 0">Data by goal</div>';
+      notesHtml += '</div>';
+      html += '<div class="sect" style="margin:14px 16px 0">Data by goal</div>';
     }
     window.__notes = items;
     order.forEach(function (tid, gi) {
@@ -198,6 +200,7 @@
       monthRow();
       html += "</table></div>";
     });
+    html += notesHtml;
     html += '<div class="note">Read-only snapshot from the tracker. Data lives on the device you opened this from.</div>';
     content.innerHTML = html;
     Array.prototype.forEach.call(document.querySelectorAll(".cbtn"), function (b) {
