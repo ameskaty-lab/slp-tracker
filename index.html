@@ -928,6 +928,41 @@ function ConfirmModal({ message, confirmLabel, confirmColor, onConfirm, onCancel
   );
 }
 
+// Highly motivating items for one student — optional, stays at the top until changed.
+function Motivators({ student, onChange }) {
+  const [adding, setAdding] = useState(false);
+  const list = Array.isArray(student.motivators) ? student.motivators : [];
+  const add = (txt) => {
+    const items = String(txt || "").split(/[,;\n]/).map(x => x.trim()).filter(Boolean).filter(x => !list.some(y => y.toLowerCase() === x.toLowerCase()));
+    if (items.length) onChange([...list, ...items]);
+  };
+  const modal = adding && (
+    <PromptModal title={`Motivating items for ${student.name}`} placeholder="e.g., bubbles, Paw Patrol, spinning top (separate with commas)"
+      onSubmit={(v) => { add(v); setAdding(false); }} onCancel={() => setAdding(false)} />
+  );
+  if (!list.length) return (
+    <div style={{ marginBottom: 10 }}>
+      {modal}
+      <button onClick={() => setAdding(true)} style={{ padding: "3px 10px", borderRadius: 999, border: "1.5px dashed #fcd34d", background: "#fff", color: "#b45309", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Motivating items</button>
+    </div>
+  );
+  return (
+    <div style={{ marginBottom: 12, background: "#fffbeb", border: "1.5px solid #fde68a", borderRadius: 10, padding: "7px 10px" }}>
+      {modal}
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 5 }}>
+        <span style={{ fontSize: 11, fontWeight: 800, color: "#b45309", marginRight: 2 }}>⭐ Motivators</span>
+        {list.map((m, i) => (
+          <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#fff", border: "1.5px solid #fcd34d", borderRadius: 999, padding: "2px 4px 2px 9px", fontSize: 12, fontWeight: 700, color: "#92400e" }}>
+            {m}
+            <button onClick={() => onChange(list.filter((_, k) => k !== i))} title="Remove" style={{ background: "none", border: "none", color: "#d97706", cursor: "pointer", fontSize: 12, padding: "0 3px", lineHeight: 1 }}>✕</button>
+          </span>
+        ))}
+        <button onClick={() => setAdding(true)} style={{ padding: "2px 9px", borderRadius: 999, border: "1.5px dashed #fcd34d", background: "transparent", color: "#b45309", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+</button>
+      </div>
+    </div>
+  );
+}
+
 function PromptModal({ title, placeholder, initialValue, onSubmit, onCancel }) {
   const [value, setValue] = useState(initialValue || "");
   return (
@@ -2059,6 +2094,7 @@ function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, 
           <button onClick={() => setTodayIds(ids => ids.filter(x => x !== s.id))} style={{ ...smallBtn, color: "#ef4444", borderColor: "#fecaca", background: "#fff5f5" }}>✕</button>
         </div>
         {(s.notes || "").trim() && <div style={{ fontSize: 13, color: s.notesHi ? "#92400e" : "#334155", marginTop: 6, whiteSpace: "pre-wrap", ...(s.notesHi ? { background: "#fef3c7", border: "1.5px solid #f59e0b", borderRadius: 8, padding: "5px 8px", fontWeight: 700 } : {}) }}>{s.notesHi ? "📌" : "📝"} {s.notes.trim()}</div>}
+        {(s.motivators || []).length > 0 && <div style={{ fontSize: 12, color: "#92400e", marginTop: 4 }}>⭐ {s.motivators.join(", ")}</div>}
         {(s.bcba || "").trim() && <div style={{ fontSize: 12, color: "#64748b", marginTop: 4, whiteSpace: "pre-wrap" }}>🤝 BCBA: {s.bcba.trim()}</div>}
         {goals.length > 0 && (
           <div style={{ marginTop: 6 }}>
@@ -4377,7 +4413,7 @@ function App() {
   const shareRoster = async () => {
     const payload = JSON.stringify({
       slpRoster: 1,
-      students: roster.map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "", owed: owedOf(s), archived: s.archived || [], docId: s.docId || "", updateDocId: s.updateDocId || "", firstName: s.firstName || "", pron: s.pron || "", perMonth: s.perMonth || 0, goalsAt: s.goalsAt || 0 })),
+      students: roster.map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "", owed: owedOf(s), archived: s.archived || [], docId: s.docId || "", updateDocId: s.updateDocId || "", firstName: s.firstName || "", pron: s.pron || "", perMonth: s.perMonth || 0, goalsAt: s.goalsAt || 0, motivators: s.motivators || [], notes: s.notes || "", notesHi: !!s.notesHi })),
       archivedStudents: (store.archivedStudents || []).map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "", owed: owedOf(s), archived: s.archived || [], docId: s.docId || "", updateDocId: s.updateDocId || "", firstName: s.firstName || "", pron: s.pron || "", perMonth: s.perMonth || 0, archivedAt: s.archivedAt || "" })),
       matLib,
       schedule: Object.fromEntries(WEEKDAYS.map(({ d }) => [d, ((store.schedule || {})[d] || []).map(id => (roster.find(s => s.id === id) || {}).name).filter(Boolean)])),
@@ -4460,7 +4496,7 @@ function App() {
         const inBuilding = typeof s.building === "string" ? s.building.trim() : "";
         const inOwed = (Array.isArray(s.owed) ? s.owed : []).filter(d => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d));
         if (idx === -1) {
-          newRoster.push({ id: makeId("student"), name: s.name.trim(), goals: inGoals, history: inHist.slice(-40), building: inBuilding, owed: [...new Set(inOwed)].sort(), docId: typeof s.docId === "string" ? s.docId : "", archived: (Array.isArray(s.archived) ? s.archived : []).filter(a => a && typeof a.tid === "string"), updateDocId: typeof s.updateDocId === "string" ? s.updateDocId : "", firstName: typeof s.firstName === "string" ? s.firstName : "", pron: typeof s.pron === "string" ? s.pron : "", perMonth: typeof s.perMonth === "number" ? s.perMonth : 0 });
+          newRoster.push({ id: makeId("student"), name: s.name.trim(), goals: inGoals, history: inHist.slice(-40), building: inBuilding, owed: [...new Set(inOwed)].sort(), docId: typeof s.docId === "string" ? s.docId : "", archived: (Array.isArray(s.archived) ? s.archived : []).filter(a => a && typeof a.tid === "string"), updateDocId: typeof s.updateDocId === "string" ? s.updateDocId : "", firstName: typeof s.firstName === "string" ? s.firstName : "", pron: typeof s.pron === "string" ? s.pron : "", perMonth: typeof s.perMonth === "number" ? s.perMonth : 0, motivators: Array.isArray(s.motivators) ? s.motivators.filter(x => typeof x === "string") : [], notes: typeof s.notes === "string" ? s.notes : "", notesHi: !!s.notesHi });
           added++;
           newSessions += inHist.length;
           return;
@@ -4517,11 +4553,15 @@ function App() {
           updateDocId: local.updateDocId || (typeof s.updateDocId === "string" ? s.updateDocId : ""),
           firstName: local.firstName || (typeof s.firstName === "string" ? s.firstName : ""),
           pron: local.pron || (typeof s.pron === "string" ? s.pron : ""),
+          motivators: (local.motivators || []).length ? local.motivators : (Array.isArray(s.motivators) ? s.motivators.filter(x => typeof x === "string") : []),
+          notes: (local.notes || "").trim() ? local.notes : (typeof s.notes === "string" ? s.notes : ""),
+          notesHi: local.notesHi || !!s.notesHi,
           perMonth: typeof s.perMonth === "number" ? s.perMonth : (local.perMonth || 0) };
         const nr = newRoster[idx];
         if ((nr.docId || "") !== (local.docId || "")) linksAdded++;
         if ((nr.updateDocId || "") !== (local.updateDocId || "")) linksAdded++;
-        if ((nr.firstName || "") !== (local.firstName || "") || (nr.pron || "") !== (local.pron || "") || (nr.perMonth || 0) !== (local.perMonth || 0)) settingsChanged++;
+        if ((nr.firstName || "") !== (local.firstName || "") || (nr.pron || "") !== (local.pron || "") || (nr.perMonth || 0) !== (local.perMonth || 0)
+          || JSON.stringify(nr.motivators || []) !== JSON.stringify(local.motivators || []) || (nr.notes || "") !== (local.notes || "") || !!nr.notesHi !== !!local.notesHi) settingsChanged++;
         if (extra.length > 0 || localGoals.length > beforeLen || updatedTpl || building !== (local.building || "") || owed.length !== owedOf(local).length) merged++;
         newSessions += extra.length;
       });
@@ -5161,6 +5201,7 @@ function App() {
             />
           </div>
         )}
+        {selectedStudent && <Motivators key={selectedStudent.id} student={selectedStudent} onChange={(list) => setStudentField(selectedStudent.id, "motivators", list)} />}
         {selectedStudent && (
           <div style={{ marginBottom: 12 }}>
             <div style={{ display: "flex", gap: 8 }}>
