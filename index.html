@@ -669,7 +669,15 @@ function syncSessionGoals(sessGoals, templates) {
     used.add(t.tid);
     const merged = { ...ex };
     TPL_KEYS.forEach(k => { merged[k] = fresh[k]; });
-    if (!itemsHaveData(ex)) merged.items = fresh.items;
+    // Items: use the saved list (new, renamed or removed items carry over) but keep counts already taken for the same item.
+    const exItems = ex.items || [];
+    const keyOf = (it) => String((it && it.name) || "").trim().toLowerCase();
+    merged.items = (fresh.items || []).map(fi => exItems.find(ei => keyOf(ei) === keyOf(fi)) || fi);
+    exItems.forEach(ei => {
+      const hasData = (ei.correct || 0) + (ei.incorrect || 0) > 0 || ei.att || (ei.bites || []).some(c => c !== "|");
+      if (hasData && !merged.items.some(mi => keyOf(mi) === keyOf(ei))) merged.items.push(ei);
+    });
+    merged.activeItem = Math.min(ex.activeItem || 0, Math.max(0, merged.items.length - 1));
     return merged;
   });
   (sessGoals || []).forEach(g => { if (!used.has(g.tid) && goalHasData(g)) out.push(g); });
