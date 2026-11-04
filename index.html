@@ -4416,6 +4416,7 @@ function App() {
       students: roster.map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "", owed: owedOf(s), archived: s.archived || [], docId: s.docId || "", updateDocId: s.updateDocId || "", firstName: s.firstName || "", pron: s.pron || "", perMonth: s.perMonth || 0, goalsAt: s.goalsAt || 0, motivators: s.motivators || [], notes: s.notes || "", notesHi: !!s.notesHi })),
       archivedStudents: (store.archivedStudents || []).map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "", owed: owedOf(s), archived: s.archived || [], docId: s.docId || "", updateDocId: s.updateDocId || "", firstName: s.firstName || "", pron: s.pron || "", perMonth: s.perMonth || 0, archivedAt: s.archivedAt || "" })),
       matLib,
+      today: { date: todayKey(), names: todayIds.map(id => (roster.find(s => s.id === id) || {}).name).filter(Boolean), done: doneIds.map(id => (roster.find(s => s.id === id) || {}).name).filter(Boolean) },
       schedule: Object.fromEntries(WEEKDAYS.map(({ d }) => [d, ((store.schedule || {})[d] || []).map(id => (roster.find(s => s.id === id) || {}).name).filter(Boolean)])),
     });
     if (navigator.share) {
@@ -4590,8 +4591,22 @@ function App() {
           if (ids.length) { newSchedule[d] = ids; schedFilled++; }
         });
       }
+      // Today's plan (who's on today's list, who's done): copied over when the code is from today.
+      let todayPlan = null;
+      if (parsed.today && parsed.today.date === todayKey() && Array.isArray(parsed.today.names)) {
+        const idOf = (n) => (newRoster.find(r => r.name.trim().toLowerCase() === String(n).trim().toLowerCase()) || {}).id;
+        const ids = parsed.today.names.map(idOf).filter(Boolean);
+        const done = (Array.isArray(parsed.today.done) ? parsed.today.done : []).map(idOf).filter(Boolean);
+        const k = todayKey();
+        const curIds = (store.dayOverride && store.dayOverride.date === k) ? store.dayOverride.ids : null;
+        const curDone = (store.dayDone && store.dayDone.date === k) ? store.dayDone.ids : [];
+        const allDone = [...new Set([...curDone, ...done])];
+        if (JSON.stringify(curIds) !== JSON.stringify(ids) || allDone.length !== curDone.length) {
+          todayPlan = { dayOverride: { date: k, ids }, dayDone: { date: k, ids: allDone } };
+        }
+      }
       const libAdded = newLib.length - matLib.length;
-      if (added === 0 && merged === 0 && libAdded === 0 && schedFilled === 0 && linksAdded === 0 && settingsChanged === 0 && archAdded === 0) {
+      if (added === 0 && merged === 0 && libAdded === 0 && schedFilled === 0 && linksAdded === 0 && settingsChanged === 0 && archAdded === 0 && !todayPlan) {
         return { ok: false, text: "Nothing new in that code (already in sync?)" };
       }
       setStore(prev => {
@@ -4600,9 +4615,9 @@ function App() {
           const st = newRoster.find(r => r.id === id);
           if (sessions[id] && st) sessions[id] = { ...sessions[id], goals: syncSessionGoals(sessions[id].goals, st.goals) };
         });
-        return { ...prev, roster: newRoster, matLib: newLib, schedule: newSchedule, archivedStudents: newArchived, sessions };
+        return { ...prev, roster: newRoster, matLib: newLib, schedule: newSchedule, archivedStudents: newArchived, sessions, ...(todayPlan || {}) };
       });
-      return { ok: true, text: `✓ ${added} added, ${merged} merged, ${newSessions} session${newSessions === 1 ? "" : "s"} synced${linksAdded ? `, ${linksAdded} Doc link${linksAdded === 1 ? "" : "s"} added` : ""}${archAdded ? `, ${archAdded} archived` : ""}` };
+      return { ok: true, text: `✓ ${added} added, ${merged} merged, ${newSessions} session${newSessions === 1 ? "" : "s"} synced${linksAdded ? `, ${linksAdded} Doc link${linksAdded === 1 ? "" : "s"} added` : ""}${archAdded ? `, ${archAdded} archived` : ""}${todayPlan ? ", today's plan copied" : ""}` };
     } catch {
       return { ok: false, text: "That doesn't look like a roster code — paste the whole thing" };
     }
