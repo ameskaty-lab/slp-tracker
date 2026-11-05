@@ -3808,6 +3808,48 @@ function RosterPanel({ roster, onRename, onDelete, onMove, onShare, onImport, on
         }}>✕</button>
       </div>
 
+      <div style={{ paddingBottom: 12, marginBottom: 12, borderBottom: "1.5px solid #f1f5f9" }}>
+        <div>
+          <button onClick={onShare} disabled={roster.length === 0} style={{
+            width: "100%", padding: "10px", borderRadius: 9, border: "none",
+            background: roster.length === 0 ? "#e2e8f0" : "#4f46e5",
+            color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit",
+          }}>{shareStatus || "Share Roster (AirDrop / Messages / Copy)"}</button>
+          <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4, textAlign: "center" }}>
+            Sends students, goals & session history to your other device.
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#94a3b8", marginBottom: 6 }}>
+            Import Roster or Doc Links Code
+          </div>
+          <textarea
+            value={importText}
+            onChange={e => { setImportText(e.target.value); setImportMsg(null); }}
+            placeholder="Paste a roster code from your other device..."
+            rows={2}
+            style={{
+              width: "100%", borderRadius: 8, border: "1.5px solid #e2e8f0",
+              padding: "8px 10px", fontFamily: "monospace", fontSize: 11, color: "#334155",
+              resize: "vertical", outline: "none", background: "#fafafa", boxSizing: "border-box",
+            }}
+          />
+          <button onClick={handleImport} disabled={!importText.trim()} style={{
+            width: "100%", marginTop: 6, padding: "9px", borderRadius: 9,
+            border: "1.5px solid #c7d2fe", background: importText.trim() ? "#eef2ff" : "#f8fafc",
+            color: importText.trim() ? "#4f46e5" : "#cbd5e1",
+            fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit",
+          }}>Import (add & merge)</button>
+          {importMsg && (
+            <div style={{
+              fontSize: 12, fontWeight: 600, marginTop: 6, textAlign: "center",
+              color: importMsg.ok ? "#16a34a" : "#dc2626",
+            }}>{importMsg.text}</div>
+          )}
+        </div>
+      </div>
+
       {roster.length === 0 && (
         <div style={{ fontSize: 13, color: "#94a3b8", marginBottom: 10 }}>
           No students yet. Tap "+ Student" above to add one.
@@ -3899,45 +3941,6 @@ function RosterPanel({ roster, onRename, onDelete, onMove, onShare, onImport, on
         </div>
       )}
 
-      <div style={{ marginTop: 12 }}>
-        <button onClick={onShare} disabled={roster.length === 0} style={{
-          width: "100%", padding: "10px", borderRadius: 9, border: "none",
-          background: roster.length === 0 ? "#e2e8f0" : "#4f46e5",
-          color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit",
-        }}>{shareStatus || "Share Roster (AirDrop / Messages / Copy)"}</button>
-        <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4, textAlign: "center" }}>
-          Sends students, goals & session history to your other device.
-        </div>
-      </div>
-
-      <div style={{ marginTop: 12 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#94a3b8", marginBottom: 6 }}>
-          Import Roster or Doc Links Code
-        </div>
-        <textarea
-          value={importText}
-          onChange={e => { setImportText(e.target.value); setImportMsg(null); }}
-          placeholder="Paste a roster code from your other device..."
-          rows={2}
-          style={{
-            width: "100%", borderRadius: 8, border: "1.5px solid #e2e8f0",
-            padding: "8px 10px", fontFamily: "monospace", fontSize: 11, color: "#334155",
-            resize: "vertical", outline: "none", background: "#fafafa", boxSizing: "border-box",
-          }}
-        />
-        <button onClick={handleImport} disabled={!importText.trim()} style={{
-          width: "100%", marginTop: 6, padding: "9px", borderRadius: 9,
-          border: "1.5px solid #c7d2fe", background: importText.trim() ? "#eef2ff" : "#f8fafc",
-          color: importText.trim() ? "#4f46e5" : "#cbd5e1",
-          fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit",
-        }}>Import (add & merge)</button>
-        {importMsg && (
-          <div style={{
-            fontSize: 12, fontWeight: 600, marginTop: 6, textAlign: "center",
-            color: importMsg.ok ? "#16a34a" : "#dc2626",
-          }}>{importMsg.text}</div>
-        )}
-      </div>
     </div>
   );
 }
