@@ -493,6 +493,11 @@ function shortDate(key) {
   const [y, m, d] = String(key).split("-").map(Number);
   return new Date(y, m - 1, d).toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" });
 }
+// makeupFor is an owed date ("2026-10-30") or "yes" for a makeup with no specific missed date.
+function makeupTag(makeupFor) {
+  if (!makeupFor) return "";
+  return makeupFor === "yes" ? "Makeup" : `Makeup for ${longDate(makeupFor)}`;
+}
 function owedOf(s) {
   return Array.isArray(s && s.owed) ? s.owed : [];
 }
@@ -2052,8 +2057,9 @@ function MonthlyUpdates({ roster, monthly, setMonthly, onLoadDoc, onSetFirstName
   );
 }
 
-function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, schedule, setDayIds, matLib, setLib, onOpenStudent, onClose, sessions, onToggleAbsent, doneIds, onUndoDone, onClinicianAbsent, onApplyGoals, onRestoreGoal, onDeleteArchived, onSendMonth, initialTab, monthly, setMonthly, onLoadMonthly, onSetFirstName, monthlyStatus, onSendUpdate, onLinkUpdateDoc, onSetPerMonth, archivedStudents }) {
+function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, schedule, setDayIds, matLib, setLib, onOpenStudent, onClose, sessions, onToggleAbsent, doneIds, onUndoDone, onClinicianAbsent, onApplyGoals, onRestoreGoal, onDeleteArchived, onSendMonth, initialTab, monthly, setMonthly, onLoadMonthly, onSetFirstName, monthlyStatus, onSendUpdate, onLinkUpdateDoc, onSetPerMonth, archivedStudents, onSetMakeup }) {
   const [tab, setTab] = useState(initialTab || "today");
+  const [makeupPick, setMakeupPick] = useState(null);
   const wd = new Date().getDay();
   const [day, setDay] = useState(wd >= 1 && wd <= 5 ? wd : 1);
   const [picker, setPicker] = useState(null); // { mode: "add" | "swap" | "week", id? }
@@ -2073,6 +2079,7 @@ function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, 
 
   const renderToday = (s) => {
     const goals = (s.goals || []).filter(g => (g.label || "").trim() || materialsText(g, matLib));
+    const mk = (sessions[s.id] || {}).makeupFor || "";
     return (
       <div key={s.id} style={card}>
         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
@@ -2086,6 +2093,8 @@ function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, 
             <>
               <button onClick={() => onToggleAbsent(s.id, "student")} title="Student absent" style={smallBtn}>🚫</button>
               <button onClick={() => onToggleAbsent(s.id, "clinician")} title="I missed this session" style={smallBtn}>🩺</button>
+              <button onClick={() => setMakeupPick(makeupPick === s.id ? null : s.id)} title="Mark as a makeup"
+                style={{ ...smallBtn, ...(mk ? { background: "#0ea5e9", borderColor: "#0ea5e9", color: "#fff" } : { color: "#0369a1", borderColor: "#bae6fd" }) }}>🔁{mk ? " ✓" : ""}</button>
             </>
           )}
           <button onClick={() => setTodayIds(ids => moveInList(ids, s.id, -1))} style={smallBtn}>▲</button>
@@ -2093,6 +2102,19 @@ function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, 
           <button onClick={() => setPicker({ mode: "swap", id: s.id })} style={{ ...smallBtn, color: "#4f46e5", borderColor: "#c7d2fe", background: "#eef2ff" }}>Swap</button>
           <button onClick={() => setTodayIds(ids => ids.filter(x => x !== s.id))} style={{ ...smallBtn, color: "#ef4444", borderColor: "#fecaca", background: "#fff5f5" }}>✕</button>
         </div>
+        {mk && !(sessions[s.id] || {}).absent && <div style={{ fontSize: 12, fontWeight: 700, color: "#0369a1", marginTop: 5 }}>🔁 {makeupTag(mk)}</div>}
+        {makeupPick === s.id && (
+          <div style={{ background: "#f0f9ff", border: "1.5px solid #bae6fd", borderRadius: 10, padding: 8, marginTop: 6 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#0369a1", marginBottom: 6 }}>Mark today's session as a makeup{owedOf(s).length ? " — for which missed date?" : ""}</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+              {owedOf(s).map(d => (
+                <button key={d} onClick={() => { onSetMakeup(s.id, mk === d ? "" : d); setMakeupPick(null); }} style={{ ...smallBtn, ...(mk === d ? { background: "#0ea5e9", borderColor: "#0ea5e9", color: "#fff" } : { color: "#0369a1", borderColor: "#bae6fd" }) }}>{mk === d ? "✓ " : ""}{shortDate(d)}</button>
+              ))}
+              <button onClick={() => { onSetMakeup(s.id, mk === "yes" ? "" : "yes"); setMakeupPick(null); }} style={{ ...smallBtn, ...(mk === "yes" ? { background: "#0ea5e9", borderColor: "#0ea5e9", color: "#fff" } : { color: "#0369a1", borderColor: "#bae6fd" }) }}>{mk === "yes" ? "✓ " : ""}{owedOf(s).length ? "No specific date" : "Yes, it's a makeup"}</button>
+              {mk && <button onClick={() => { onSetMakeup(s.id, ""); setMakeupPick(null); }} style={{ ...smallBtn, color: "#64748b" }}>Not a makeup</button>}
+            </div>
+          </div>
+        )}
         {(s.notes || "").trim() && <div style={{ fontSize: 13, color: s.notesHi ? "#92400e" : "#334155", marginTop: 6, whiteSpace: "pre-wrap", ...(s.notesHi ? { background: "#fef3c7", border: "1.5px solid #f59e0b", borderRadius: 8, padding: "5px 8px", fontWeight: 700 } : {}) }}>{s.notesHi ? "📌" : "📝"} {s.notes.trim()}</div>}
         {(s.motivators || []).length > 0 && <div style={{ fontSize: 12, color: "#92400e", marginTop: 4 }}>⭐ {s.motivators.join(", ")}</div>}
         {(s.bcba || "").trim() && <div style={{ fontSize: 12, color: "#64748b", marginTop: 4, whiteSpace: "pre-wrap" }}>🤝 BCBA: {s.bcba.trim()}</div>}
@@ -4629,7 +4651,7 @@ function App() {
   const bcbaCopy = (selectedStudent && session.bcbaInclude && (selectedStudent.bcba || "").trim()) || "";
   const isAbsent = !!(selectedStudent && session.absent);
   const absentLine = `${session.absentBy === "clinician" ? "Clinician absent" : "Student absent"}${(session.absentReason || "").trim() ? ` (${session.absentReason.trim()})` : ""}`;
-  const makeupLine = selectedStudent && !isAbsent && session.makeupFor ? `Makeup session for ${longDate(session.makeupFor)}` : "";
+  const makeupLine = selectedStudent && !isAbsent && session.makeupFor ? makeupTag(session.makeupFor) : "";
 
   const matStr = (g) => { const u = usedMaterials(g, matLib); return u.length ? `Materials: ${u.join(", ")}` : ""; };
 
@@ -4644,8 +4666,7 @@ function App() {
       if (bcbaCopy) h += `<p><strong>BCBA collaboration:</strong> ${bcbaCopy}</p>`;
       return h;
     }
-    let html = `<p><strong>${dateStr}</strong></p>`;
-    if (makeupLine) html += `<p><em>${makeupLine}</em></p>`;
+    let html = `<p><strong>${dateStr}</strong>${makeupLine ? ` — ${makeupLine}` : ""}</p>`;
     goals.filter(g => !g.skipped && !isEnding(g) && (goalHasData(g) || (g.notes || "").trim() || matStr(g) || helpStr(g))).forEach((g, i) => {
       const label = `${g.status === "screening" ? "Screening: " : ""}${g.label || `Goal ${i + 1}`}`;
       // Goal with a note and/or materials but no data: copy just those.
@@ -4739,7 +4760,7 @@ function App() {
       if (bcbaCopy) out.push(`BCBA collaboration: ${bcbaCopy}`);
       return out.join("\n");
     }
-    let lines = makeupLine ? [dateStr, makeupLine, ""] : [dateStr, ""];
+    let lines = [makeupLine ? `${dateStr} — ${makeupLine}` : dateStr, ""];
     goals.filter(g => !g.skipped && !isEnding(g) && (goalHasData(g) || (g.notes || "").trim() || matStr(g) || helpStr(g))).forEach((g, i) => {
       const label = `${g.status === "screening" ? "Screening: " : ""}${g.label || `Goal ${i + 1}`}`;
       // Goal with a note and/or materials but no data: copy just those.
@@ -5120,6 +5141,7 @@ function App() {
             if (already && !window.confirm("This update is already in the parent Doc. Send it again?")) return;
             runDocJob({ kind: "update", sid: "monthly", key: it.key, docId: it.student.updateDocId, title: it.title, tables, force: already });
           }}
+          onSetMakeup={(id, v) => setStore(prev => ({ ...prev, sessions: { ...prev.sessions, [id]: { ...sessionFor(prev, id), makeupFor: v } } }))}
           onSetPerMonth={(id, n) => setStore(prev => ({ ...prev, roster: prev.roster.map(s => s.id === id ? { ...s, perMonth: n } : s) }))}
           onLinkUpdateDoc={(id, docId) => setStore(prev => ({ ...prev, roster: prev.roster.map(s => s.id === id ? { ...s, updateDocId: docId } : s), archivedStudents: (prev.archivedStudents || []).map(s => s.id === id ? { ...s, updateDocId: docId } : s) }))}
           onClose={() => { setShowPlan(false); setPlanTab(null); }}
@@ -5245,7 +5267,7 @@ function App() {
                 border: `2px solid ${session.makeupFor && !isAbsent ? "#0ea5e9" : "#e2e8f0"}`,
                 background: session.makeupFor && !isAbsent ? "#0ea5e9" : "#fff",
                 color: session.makeupFor && !isAbsent ? "#fff" : "#64748b", opacity: isAbsent ? 0.5 : 1,
-              }}>{session.makeupFor && !isAbsent ? `✓ Makeup ${shortDate(session.makeupFor)}` : `🔁 Owed: ${owedOf(selectedStudent).length}`}</button>
+              }}>{session.makeupFor && !isAbsent ? (session.makeupFor === "yes" ? "✓ Makeup" : `✓ Makeup ${shortDate(session.makeupFor)}`) : `🔁 Owed: ${owedOf(selectedStudent).length}`}</button>
             </div>
             {isAbsent && (
               <div style={{ background: "#fef2f2", border: "1.5px solid #fecaca", borderRadius: 10, padding: 10, marginTop: 8 }}>
@@ -5265,6 +5287,10 @@ function App() {
                 <div style={{ ...sectionLabel, color: "#0369a1", marginBottom: 6 }}>Makeups owed — tap one to make this session a makeup</div>
                 {owedOf(selectedStudent).length === 0 && <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>None owed.</div>}
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                  <button onClick={() => setSessionFields({ makeupFor: session.makeupFor === "yes" ? "" : "yes" })} style={{
+                    borderRadius: 999, border: `2px solid ${session.makeupFor === "yes" ? "#0ea5e9" : "#bae6fd"}`, background: session.makeupFor === "yes" ? "#0ea5e9" : "#fff",
+                    padding: "5px 10px", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700, color: session.makeupFor === "yes" ? "#fff" : "#0369a1",
+                  }}>{session.makeupFor === "yes" ? "✓ " : ""}Makeup (no date)</button>
                   {owedOf(selectedStudent).map(d => {
                     const on = session.makeupFor === d;
                     return (
@@ -5295,7 +5321,7 @@ function App() {
                 </div>
                 {session.makeupFor && (
                   <div style={{ fontSize: 11, color: "#0369a1", marginTop: 8 }}>
-                    This session is a makeup for {longDate(session.makeupFor)}. It comes off the list when you tap New Session.
+                    {session.makeupFor === "yes" ? "This session is marked as a makeup." : <>This session is a makeup for {longDate(session.makeupFor)}. It comes off the list when you tap New Session.</>}
                   </div>
                 )}
               </div>
