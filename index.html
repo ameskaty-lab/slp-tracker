@@ -4438,10 +4438,10 @@ function App() {
   const shareRoster = async () => {
     const payload = JSON.stringify({
       slpRoster: 1,
-      students: roster.map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "", owed: owedOf(s), archived: s.archived || [], docId: s.docId || "", updateDocId: s.updateDocId || "", firstName: s.firstName || "", pron: s.pron || "", perMonth: s.perMonth || 0, goalsAt: s.goalsAt || 0, motivators: s.motivators || [], notes: s.notes || "", notesHi: !!s.notesHi })),
+      students: roster.map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "", owed: owedOf(s), archived: s.archived || [], docId: s.docId || "", updateDocId: s.updateDocId || "", firstName: s.firstName || "", pron: s.pron || "", perMonth: s.perMonth || 0, goalsAt: s.goalsAt || 0, restoredAt: s.restoredAt || "", motivators: s.motivators || [], notes: s.notes || "", notesHi: !!s.notesHi })),
       archivedStudents: (store.archivedStudents || []).map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "", owed: owedOf(s), archived: s.archived || [], docId: s.docId || "", updateDocId: s.updateDocId || "", firstName: s.firstName || "", pron: s.pron || "", perMonth: s.perMonth || 0, archivedAt: s.archivedAt || "" })),
       matLib,
-      today: { date: todayKey(), names: todayIds.map(id => (roster.find(s => s.id === id) || {}).name).filter(Boolean), done: doneIds.map(id => (roster.find(s => s.id === id) || {}).name).filter(Boolean) },
+      today: (overrideActive || doneIds.length) ? { date: todayKey(), changed: overrideActive, names: todayIds.map(id => (roster.find(s => s.id === id) || {}).name).filter(Boolean), done: doneIds.map(id => (roster.find(s => s.id === id) || {}).name).filter(Boolean) } : null,
       schedule: Object.fromEntries(WEEKDAYS.map(({ d }) => [d, ((store.schedule || {})[d] || []).map(id => (roster.find(s => s.id === id) || {}).name).filter(Boolean)])),
     });
     if (navigator.share) {
@@ -4515,7 +4515,19 @@ function App() {
       let added = 0, merged = 0, newSessions = 0, linksAdded = 0, settingsChanged = 0;
       const goalsSynced = [];
       const newRoster = [...roster];
+      const nmKey = (x) => String(x || "").trim().toLowerCase();
+      let archList = [...(store.archivedStudents || [])];
+      let keptArchived = 0, archMoved = 0, restoredHere = 0;
       incoming.forEach(s => {
+        const arch = archList.find(a => nmKey(a.name) === nmKey(s.name));
+        if (arch && !newRoster.some(r => nmKey(r.name) === nmKey(s.name))) {
+          // Archived here: stay archived unless the other device restored them after it was archived.
+          if (!(s.restoredAt && s.restoredAt > (arch.archivedAt || ""))) { keptArchived++; return; }
+          archList = archList.filter(a => a !== arch);
+          const { archivedAt, ...back } = arch;
+          newRoster.push({ ...back, restoredAt: s.restoredAt });
+          restoredHere++;
+        }
         const inGoals = (Array.isArray(s.goals) ? s.goals : []).map(cleanGoal);
         const inHist = (Array.isArray(s.history) ? s.history : []).filter(h => h && typeof h.date === "string");
         const idx = newRoster.findIndex(r => r.name.trim().toLowerCase() === s.name.trim().toLowerCase());
@@ -4592,7 +4604,18 @@ function App() {
         newSessions += extra.length;
       });
       // Archived students from the other device: keep a copy here too (never un-archives or removes anything).
-      const newArchived = [...(store.archivedStudents || [])];
+      (Array.isArray(parsed.archivedStudents) ? parsed.archivedStudents : []).forEach(a => {
+        if (!a || typeof a.name !== "string") return;
+        const i = newRoster.findIndex(r => nmKey(r.name) === nmKey(a.name));
+        if (i === -1) return;
+        const local = newRoster[i];
+        if ((a.archivedAt || "") > (local.restoredAt || "")) {
+          newRoster.splice(i, 1);
+          archList.push({ ...local, archivedAt: a.archivedAt || new Date().toISOString() });
+          archMoved++;
+        }
+      });
+      const newArchived = archList;
       let archAdded = 0;
       (Array.isArray(parsed.archivedStudents) ? parsed.archivedStudents : []).forEach(a => {
         if (!a || typeof a.name !== "string" || !a.name.trim()) return;
@@ -4626,12 +4649,14 @@ function App() {
         const curIds = (store.dayOverride && store.dayOverride.date === k) ? store.dayOverride.ids : null;
         const curDone = (store.dayDone && store.dayDone.date === k) ? store.dayDone.ids : [];
         const allDone = [...new Set([...curDone, ...done])];
-        if (JSON.stringify(curIds) !== JSON.stringify(ids) || allDone.length !== curDone.length) {
-          todayPlan = { dayOverride: { date: k, ids }, dayDone: { date: k, ids: allDone } };
+        // Only take the other device's list if it was actually changed for today there.
+        const takeList = parsed.today.changed !== false && JSON.stringify(curIds) !== JSON.stringify(ids);
+        if (takeList || allDone.length !== curDone.length) {
+          todayPlan = { ...(takeList ? { dayOverride: { date: k, ids } } : {}), dayDone: { date: k, ids: allDone } };
         }
       }
       const libAdded = newLib.length - matLib.length;
-      if (added === 0 && merged === 0 && libAdded === 0 && schedFilled === 0 && linksAdded === 0 && settingsChanged === 0 && archAdded === 0 && !todayPlan) {
+      if (added === 0 && merged === 0 && libAdded === 0 && schedFilled === 0 && linksAdded === 0 && settingsChanged === 0 && archAdded === 0 && !todayPlan && archMoved === 0 && restoredHere === 0) {
         return { ok: false, text: "Nothing new in that code (already in sync?)" };
       }
       setStore(prev => {
@@ -4640,9 +4665,11 @@ function App() {
           const st = newRoster.find(r => r.id === id);
           if (sessions[id] && st) sessions[id] = { ...sessions[id], goals: syncSessionGoals(sessions[id].goals, st.goals) };
         });
-        return { ...prev, roster: newRoster, matLib: newLib, schedule: newSchedule, archivedStudents: newArchived, sessions, ...(todayPlan || {}) };
+        const live = new Set(newRoster.map(r => r.id));
+        const sel = live.has(prev.selectedId) ? prev.selectedId : "quick";
+        return { ...prev, roster: newRoster, matLib: newLib, schedule: newSchedule, archivedStudents: newArchived, sessions, selectedId: sel, ...(todayPlan || {}) };
       });
-      return { ok: true, text: `✓ ${added} added, ${merged} merged, ${newSessions} session${newSessions === 1 ? "" : "s"} synced${linksAdded ? `, ${linksAdded} Doc link${linksAdded === 1 ? "" : "s"} added` : ""}${archAdded ? `, ${archAdded} archived` : ""}${todayPlan ? ", today's plan copied" : ""}` };
+      return { ok: true, text: `✓ ${added} added, ${merged} merged, ${newSessions} session${newSessions === 1 ? "" : "s"} synced${linksAdded ? `, ${linksAdded} Doc link${linksAdded === 1 ? "" : "s"} added` : ""}${archAdded ? `, ${archAdded} archived` : ""}${todayPlan ? ", today's plan copied" : ""}${archMoved ? `, ${archMoved} archived to match` : ""}${restoredHere ? `, ${restoredHere} restored to match` : ""}${keptArchived ? ` (${keptArchived} kept archived)` : ""}` };
     } catch {
       return { ok: false, text: "That doesn't look like a roster code — paste the whole thing" };
     }
@@ -5203,12 +5230,22 @@ function App() {
           onArchive={(ids) => setStore(prev => {
             const set = new Set(ids);
             const moving = prev.roster.filter(s => set.has(s.id)).map(s => ({ ...s, archivedAt: new Date().toISOString() }));
-            return { ...prev, roster: prev.roster.filter(s => !set.has(s.id)), archivedStudents: [...(prev.archivedStudents || []), ...moving],
+            // If the same child is already archived (e.g. added back by a roster share), merge instead of keeping two copies.
+            let arch = [...(prev.archivedStudents || [])];
+            moving.forEach(m => {
+              const k = arch.findIndex(a => String(a.name).trim().toLowerCase() === String(m.name).trim().toLowerCase());
+              if (k === -1) { arch.push(m); return; }
+              const old = arch[k];
+              const dates = new Set((m.history || []).map(h => h.date));
+              const history = [...(old.history || []).filter(h => !dates.has(h.date)), ...(m.history || [])].sort((a, b) => (a.date < b.date ? -1 : 1));
+              arch[k] = { ...old, ...m, history, docId: m.docId || old.docId, updateDocId: m.updateDocId || old.updateDocId };
+            });
+            return { ...prev, roster: prev.roster.filter(s => !set.has(s.id)), archivedStudents: arch,
               selectedId: set.has(prev.selectedId) ? "quick" : prev.selectedId };
           })}
           onRestore={(ids) => setStore(prev => {
             const set = new Set(ids);
-            const back = (prev.archivedStudents || []).filter(s => set.has(s.id)).map(s => { const { archivedAt, ...rest } = s; return rest; });
+            const back = (prev.archivedStudents || []).filter(s => set.has(s.id)).map(s => { const { archivedAt, ...rest } = s; return { ...rest, restoredAt: new Date().toISOString() }; });
             return { ...prev, roster: [...prev.roster, ...back], archivedStudents: (prev.archivedStudents || []).filter(s => !set.has(s.id)) };
           })}
         />
