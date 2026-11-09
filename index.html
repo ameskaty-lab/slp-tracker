@@ -184,8 +184,13 @@ function noteStyles(text) {
   });
   return styles;
 }
-async function sendNoteToDoc(docId, noteText, token) {
+async function sendNoteToDoc(docId, noteText, token, studentName) {
   const doc = await gfetch(`https://docs.googleapis.com/v1/documents/${docId}`, token);
+  // Safety check: the Doc's name should include the student's code (e.g. "BrCr"), or the link is probably wrong.
+  const code = String(studentName || "").trim().toLowerCase();
+  if (code && !String(doc.title || "").toLowerCase().includes(code)) {
+    const e = new Error("wrongdoc"); e.code = "wrongdoc"; e.title = doc.title || "(untitled)"; throw e;
+  }
   const at = findNoteIndex(doc);
   const text = noteText.trim() + "\n\n";
   const end = at + text.length;
@@ -4893,7 +4898,7 @@ function App() {
         rememberGAccount();
         setDocStatus({ sid: job.sid, ok: true, msg: "✓ Goal list added to the Doc" });
       } else {
-        const r = await sendNoteToDoc(job.docId, job.text, token);
+        const r = await sendNoteToDoc(job.docId, job.text, token, job.okName ? "" : job.name);
         markSent(job.sid);
         rememberGAccount();
         setDocStatus({ sid: job.sid, ok: true, msg: `✓ Added to "${r.title}"` });
@@ -4902,6 +4907,11 @@ function App() {
     } catch (e) {
       if (e.code === 401) { startGoogleSignIn(job); return; }
       if (e.code === 404 || e.code === 403) forgetGAccount();
+      if (e.code === "wrongdoc") {
+        if (window.confirm(`Heads up: ${job.name}'s linked Doc is named "${e.title}", not ${job.name}.\n\nOK = send there anyway\nCancel = don't send, and fix the link`)) runDocJob({ ...job, okName: true });
+        else { setDocStatus({ sid: job.sid, ok: false, msg: `Not sent — ${job.name} is linked to "${e.title}". Paste the right Doc link below.` }); setLinkingDoc({ sid: job.sid, then: null }); }
+        return;
+      }
       if (e.code === "dup") {
         if (window.confirm(`"${job.title}" is already in that parent Doc. Add it again anyway?`)) runDocJob({ ...job, force: true });
         else setDocStatus({ sid: job.sid, ok: false, msg: "Not sent — that month is already in the parent Doc." });
@@ -4935,7 +4945,7 @@ function App() {
     if (!selectedStudent) return;
     if (!selectedStudent.docId) { setLinkingDoc({ sid: selectedStudent.id, then: "note" }); return; }
     if (session.sentToDoc && !force) { setConfirmResend(true); return; }
-    runDocJob({ kind: "note", sid: selectedStudent.id, docId: selectedStudent.docId, text: buildSummaryPlainText() });
+    runDocJob({ kind: "note", sid: selectedStudent.id, name: selectedStudent.name, docId: selectedStudent.docId, text: buildSummaryPlainText() });
   };
   const sendMonthToDoc = (sid, list) => {
     const st = roster.find(s => s.id === sid);
@@ -5118,7 +5128,7 @@ function App() {
             const then = linkingDoc.then;
             setLinkingDoc(null);
             if (then === "note" && selectedStudent && selectedStudent.id === linkingDoc.sid) {
-              runDocJob({ kind: "note", sid: selectedStudent.id, docId: id, text: buildSummaryPlainText() });
+              runDocJob({ kind: "note", sid: selectedStudent.id, name: selectedStudent.name, docId: id, text: buildSummaryPlainText() });
             }
           }}
           onCancel={() => setLinkingDoc(null)}
