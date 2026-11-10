@@ -800,6 +800,10 @@ function goalHasData(g) {
     + (g.biteRuns || []).length + (g.biteCount || 0) > 0;
 }
 
+function pctWithPrompts(c, p, t) {
+  return `${c}/${t} — ${Math.round((c / t) * 100)}% independent, ${Math.round(((c + p) / t) * 100)}% with prompts`;
+}
+
 function itemsSummary(g) {
   if (g.type === "bites") return bitesSummary(g);
   if (g.oneTry) return oneTrySummary(g);
@@ -807,12 +811,13 @@ function itemsSummary(g) {
   if (items.length === 0) return g.type === "percent" ? "no trials" : "0x";
   const tc = items.reduce((s, it) => s + (it.correct || 0), 0);
   const tt = items.reduce((s, it) => s + (it.correct || 0) + (it.incorrect || 0), 0);
+  const tp = items.reduce((s, it) => s + (it.prompted || 0), 0);
   const total = g.type === "percent"
-    ? `${tc}/${tt}${tt > 0 ? ` — ${Math.round((tc / tt) * 100)}%` : ""} total`
+    ? `${tc}/${tt}${tt > 0 ? ` — ${Math.round((tc / tt) * 100)}%${tp ? ` independent, ${Math.round(((tc + tp) / tt) * 100)}% with prompts` : ""}` : ""} total`
     : `${tc}x total`;
   const per = items.map(it => {
     const t2 = (it.correct || 0) + (it.incorrect || 0);
-    return g.type === "percent" ? `${it.name} ${it.correct || 0}/${t2}` : `${it.name} ${it.correct || 0}x`;
+    return g.type === "percent" ? `${it.name} ${it.correct || 0}/${t2}${it.prompted ? ` (~${it.prompted})` : ""}` : `${it.name} ${it.correct || 0}x`;
   }).join(", ");
   if (items.length === 1) return per;
   return `${per}; ${total}`;
@@ -2680,8 +2685,9 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, onChange, canSkip, index, 
     }
   };
 
-  const handlePlus = () => bumpBy("correct", 1);
-  const handleMinus = () => bumpBy("incorrect", 1);
+  const handlePlus = () => applyTap(goal, "correct", 1, onUpdate);
+  const handlePrompt = () => applyTap(goal, "prompted", 1, onUpdate);
+  const handleMinus = () => applyTap(goal, "incorrect", 1, onUpdate);
   const handleBite = () => {
     const n = (goal.biteCount || 0) + 1;
     if (n >= (goal.biteTarget || 1)) {
@@ -2697,7 +2703,13 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, onChange, canSkip, index, 
       return;
     }
     if (goal.type === "percent") {
-      if (incorrect > 0) bumpBy("incorrect", -1);
+      const last = (goal.tapLog || []).slice(-1)[0];
+      const popLog = () => onUpdate(goal.id, (prev) => ({ ...prev, tapLog: (prev.tapLog || []).slice(0, -1) }));
+      if (last === "p" && (cur.prompted || 0) > 0) { applyTap(goal, "prompted", -1, onUpdate); popLog(); }
+      else if (last === "c" && correct > 0) { bumpBy("correct", -1); popLog(); }
+      else if (last === "i" && incorrect - (cur.prompted || 0) > 0) { bumpBy("incorrect", -1); popLog(); }
+      else if (incorrect - (cur.prompted || 0) > 0) bumpBy("incorrect", -1);
+      else if ((cur.prompted || 0) > 0) applyTap(goal, "prompted", -1, onUpdate);
       else if (correct > 0) bumpBy("correct", -1);
     } else {
       if (correct > 0) bumpBy("correct", -1);
@@ -2716,8 +2728,8 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, onChange, canSkip, index, 
   const doConfirm = (type) => {
     if (type === "tally") {
       if (isDur) update({ durations: [] });
-      else if (hasItems) onUpdate(goal.id, (prev) => ({ ...prev, items: (prev.items || []).map(it => ({ ...it, correct: 0, incorrect: 0, bites: [] })) }));
-      else update({ correct: 0, incorrect: 0, sup: {}, ctxData: { str: { c: 0, i: 0 }, unstr: { c: 0, i: 0 } }, biteCount: 0, biteRuns: [], intervals: [], zeroLogged: false });
+      else if (hasItems) onUpdate(goal.id, (prev) => ({ ...prev, tapLog: [], items: (prev.items || []).map(it => ({ ...it, correct: 0, incorrect: 0, prompted: 0, bites: [] })) }));
+      else update({ correct: 0, incorrect: 0, prompted: 0, tapLog: [], sup: {}, ctxData: { str: { c: 0, i: 0 }, unstr: { c: 0, i: 0 } }, biteCount: 0, biteRuns: [], intervals: [], zeroLogged: false });
     }
     if (type === "timer") update({ timerRemaining: goal.timerDuration, timerRunning: false, timerAlert: false });
     setConfirm(null);
@@ -2981,6 +2993,12 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, onChange, canSkip, index, 
           <div style={{ fontFamily: "monospace", fontSize: 22, fontWeight: 700, color: "#1e293b" }}>
             {hasItems && <span style={{ fontSize: 12, color: "#4f46e5", display: "block", fontFamily: "inherit" }}>{cur.name}</span>}
             {isDur ? (goal.durations.length ? formatTime(Math.max(...goal.durations)) : "—") : goal.type === "percent" ? `${correct}/${total}` : `${correct}x`}
+            {goal.type === "percent" && total > 0 && (
+              <span style={{ display: "block", fontFamily: "-apple-system, system-ui, sans-serif", fontSize: 12, fontWeight: 700, color: "#64748b" }}>
+                +{correct} <span style={{ color: "#d97706" }}>~{cur.prompted || 0}</span> −{incorrect - (cur.prompted || 0)}
+                {(cur.prompted || 0) > 0 ? ` · ${Math.round(((correct + (cur.prompted || 0)) / total) * 100)}% w/ prompts` : ""}
+              </span>
+            )}
           </div>
           {goal.type === "percent" && (
             <div style={{
@@ -3063,7 +3081,7 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, onChange, canSkip, index, 
                 {goal.type === "percent" ? `${iv.c || 0}/${(iv.c || 0) + (iv.i || 0)}` : `${iv.c || 0}x`}
               </span>
             ))}
-            <button onClick={() => update({ intervals: [...(goal.intervals || []), { c: goal.correct || 0, i: goal.incorrect || 0 }], correct: 0, incorrect: 0, timerRemaining: goal.timerDuration, timerRunning: false })} style={{
+            <button onClick={() => update({ intervals: [...(goal.intervals || []), { c: goal.correct || 0, i: goal.incorrect || 0, p: goal.prompted || 0 }], correct: 0, incorrect: 0, prompted: 0, timerRemaining: goal.timerDuration, timerRunning: false })} style={{
               padding: "4px 10px", borderRadius: 999, border: "1.5px solid #c7d2fe",
               background: "#eef2ff", color: "#4f46e5", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
             }}>⏭ next interval</button>
@@ -3089,6 +3107,13 @@ function GoalCard({ goal, onUpdate, onRemove, onSkip, onChange, canSkip, index, 
             background: capReached ? "#cbd5e1" : "#22c55e", color: "#fff", fontSize: 24, fontWeight: 700,
             cursor: capReached ? "default" : "pointer", boxShadow: capReached ? "none" : "0 3px 0 #16a34a",
           }}>+</button>}
+          {goal.type === "percent" && (
+            <button onClick={capReached ? undefined : handlePrompt} disabled={capReached} title="Prompted" style={{
+              flex: 1, padding: "14px 0", borderRadius: 12, border: "none",
+              background: capReached ? "#cbd5e1" : "#f59e0b", color: "#fff", fontSize: 24, fontWeight: 700,
+              cursor: capReached ? "default" : "pointer", boxShadow: capReached ? "none" : "0 3px 0 #b45309",
+            }}>~</button>
+          )}
           {goal.type === "percent" && (
             <button onClick={capReached ? undefined : handleMinus} disabled={capReached} style={{
               flex: 1, padding: "14px 0", borderRadius: 12, border: "none",
@@ -3419,6 +3444,7 @@ function SummaryLine({ goal, index }) {
   let dataStr = "";
   if (goal.type === "percent") {
     dataStr = `${correct}/${total} — ${pct ?? "—"}% accuracy`;
+    if (goal.type === "percent" && (goal.prompted || 0) > 0 && total > 0) dataStr = pctWithPrompts(correct, goal.prompted, total);
   } else {
     dataStr = timerLabel ? `${total}x / ${timerLabel}` : `${total}x`;
   }
@@ -3497,7 +3523,24 @@ function SummaryLine({ goal, index }) {
   );
 }
 
-function applyTap(goal, field, delta, onUpdate) {
+// ~ (prompted) is stored as a not-independent trial (incorrect +1) plus prompted +1,
+// so totals and independent % stay correct everywhere; "with prompts" % = (correct + prompted) / total.
+function applyTap(goal, field0, delta, onUpdate) {
+  if (field0 === "prompted") {
+    applyTap(goal, "incorrect", delta, onUpdate);
+    const bumpP = (o) => ({ ...o, prompted: Math.max(0, (o.prompted || 0) + delta) });
+    onUpdate(goal.id, (prev) => {
+      if (itemsOn(prev)) {
+        const idx = Math.min(prev.activeItem || 0, (prev.items || []).length - 1);
+        return { ...prev, items: (prev.items || []).map((it, i) => (i === idx ? bumpP(it) : it)) };
+      }
+      return bumpP(prev);
+    });
+    if (delta > 0) onUpdate(goal.id, (prev) => ({ ...prev, tapLog: [...(prev.tapLog || []).slice(-60), "p"] }));
+    return;
+  }
+  const field = field0;
+  if (delta > 0 && (field === "correct" || field === "incorrect")) onUpdate(goal.id, (prev) => ({ ...prev, tapLog: [...(prev.tapLog || []).slice(-60), field === "correct" ? "c" : "i"] }));
   const hasItems = itemsOn(goal);
   const selSup = goal.usedSupport || "ind";
   const wrSup = goal.support || "ind";
@@ -3616,6 +3659,13 @@ function CompactLine({ goal, index, onTap, at, onUpdate, missed }) {
           background: locked ? "#cbd5e1" : "#22c55e", color: "#fff", fontSize: 18, fontWeight: 700,
           cursor: locked ? "default" : "pointer",
         }}>+</button>
+      )}
+      {goal.type === "percent" && !goal.oneTry && (
+        <button onClick={(e) => { e.stopPropagation(); if (!locked) applyTap(goal, "prompted", 1, onUpdate); }} disabled={locked} title="Prompted" style={{
+          width: 36, height: 36, borderRadius: 10, border: "none", flexShrink: 0,
+          background: locked ? "#cbd5e1" : "#f59e0b", color: "#fff", fontSize: 18, fontWeight: 700,
+          cursor: locked ? "default" : "pointer",
+        }}>~</button>
       )}
       {goal.type === "percent" && !goal.oneTry && (
         <button onClick={(e) => { e.stopPropagation(); if (!locked) applyTap(goal, "incorrect", 1, onUpdate); }} disabled={locked} style={{
@@ -4712,7 +4762,7 @@ function App() {
       const pct = total > 0 && g.type === "percent" ? Math.round((correct / total) * 100) : null;
       const timerLabel = g.timerDuration ? formatTimerLabel(g.timerDuration) : null;
       let dataStr = g.type === "percent"
-        ? `${correct}/${total} — ${pct ?? "—"}% accuracy`
+        ? ((g.prompted || 0) > 0 && total > 0 ? pctWithPrompts(correct, g.prompted, total) : `${correct}/${total} — ${pct ?? "—"}% accuracy`)
         : timerLabel ? `${total}x / ${timerLabel}` : `${total}x`;
       const supAgg = Object.entries(g.sup || {}).filter(([c2, b]) => (b.c || 0) + (b.i || 0) > 0);
       if (supAgg.length > 0 && g.type !== "duration" && !itemsOn(g)) {
@@ -4807,7 +4857,7 @@ function App() {
       const pct = total > 0 && g.type === "percent" ? Math.round((correct / total) * 100) : null;
       const timerLabel = g.timerDuration ? formatTimerLabel(g.timerDuration) : null;
       let dataStr = g.type === "percent"
-        ? `${correct}/${total} — ${pct ?? "—"}% accuracy`
+        ? ((g.prompted || 0) > 0 && total > 0 ? pctWithPrompts(correct, g.prompted, total) : `${correct}/${total} — ${pct ?? "—"}% accuracy`)
         : timerLabel ? `${total}x / ${timerLabel}` : `${total}x`;
       const supAgg = Object.entries(g.sup || {}).filter(([c2, b]) => (b.c || 0) + (b.i || 0) > 0);
       if (supAgg.length > 0 && g.type !== "duration" && !itemsOn(g)) {
@@ -5027,6 +5077,8 @@ function App() {
             const accC2 = (g.correct || 0) + ivC + accB;
             const base = { tid: g.tid, label: g.label, type: g.type, correct: accC2, incorrect: allT2 - accC2, support: g.support || "ind" };
             if (g.status === "screening") base.screening = true;
+            const prmt = (g.prompted || 0) + (g.intervals || []).reduce((a, v) => a + (v.p || 0), 0);
+            if (prmt > 0) base.prompted = prmt;
             if (ivC + ivI > 0) base.intervals = g.intervals;
             if (pT > 0) base.sup = g.sup;
             const bRuns = [...(g.biteRuns || []), ...((g.biteCount || 0) > 0 ? [g.biteCount] : [])];
@@ -5047,8 +5099,10 @@ function App() {
             if ((g.items || []).length > 0 && (itemsOn(g) || itemsHaveData(g))) {
               const its = g.items
                 .filter(it => (it.correct || 0) + (it.incorrect || 0) > 0 || it.att)
-                .map(it => ({ name: it.name, correct: it.correct || 0, incorrect: it.incorrect || 0 }));
+                .map(it => ({ name: it.name, correct: it.correct || 0, incorrect: it.incorrect || 0, ...(it.prompted ? { prompted: it.prompted } : {}) }));
               base.items = its;
+              const ip = its.reduce((a, it) => a + (it.prompted || 0), 0);
+              if (ip || base.prompted) base.prompted = ip + (itemsOn(g) ? 0 : (base.prompted || 0));
               // Items paused: keep the per-item taps from earlier and add the overall count on top.
               const extraC = itemsOn(g) ? 0 : base.correct, extraI = itemsOn(g) ? 0 : base.incorrect;
               base.correct = its.reduce((s, it) => s + it.correct, 0) + extraC;

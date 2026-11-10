@@ -93,7 +93,7 @@
         addGoal(hg.tid, hg.label, hg.type);
         // keep latest label from history if template missing
         if (byTid[hg.tid] && !byTid[hg.tid].label && hg.label) byTid[hg.tid].label = hg.label;
-        byTid[hg.tid].points.push({ date: entry.date, correct: hg.correct || 0, incorrect: hg.incorrect || 0, items: hg.items, duration: hg.duration || 0, support: hg.support, sup: hg.sup });
+        byTid[hg.tid].points.push({ date: entry.date, correct: hg.correct || 0, incorrect: hg.incorrect || 0, prompted: hg.prompted || 0, items: hg.items, duration: hg.duration || 0, support: hg.support, sup: hg.sup });
       });
     });
     var tplByTid = {};
@@ -120,7 +120,7 @@
         if (g.type === "bites") s2 = "best " + c + " in a row";
         else if (g.type === "duration") s2 = Math.floor((g.duration || 0) / 60) + ":" + ("0" + ((g.duration || 0) % 60)).slice(-2) + " longest";
         else if (g.type === "tally") s2 = c + "x";
-        else s2 = c + "/" + t + (t ? " — " + Math.round(c / t * 100) + "% accuracy" : "");
+        else s2 = c + "/" + t + (t ? " — " + Math.round(c / t * 100) + "% " + (g.prompted ? "independent, " + Math.round((c + g.prompted) / t * 100) + "% with prompts" : "accuracy") : "");
         if (g.items && g.items.length && g.type !== "bites") s2 = g.items.map(function (it) { var tt = (it.correct || 0) + (it.incorrect || 0); return it.name + " " + (g.type === "tally" ? (it.correct || 0) + "x" : (it.correct || 0) + "/" + tt); }).join(", ");
         lines.push(lbl + " — " + s2);
       });
@@ -175,6 +175,7 @@
         var met = supOk && target !== null && (g.type === "duration" ? (p.duration || 0) >= target * 60 : isPct ? (pct !== null && pct >= target) : p.correct >= target);
         mc += p.correct; mt += total;
         var scoreTxt = isPct ? p.correct + "/" + total : p.correct + "x";
+        if (isPct && p.prompted > 0 && total > 0) scoreTxt += " (~" + p.prompted + ", " + Math.round((p.correct + p.prompted) / total * 100) + "% w/ prompts)";
         if (p.items && p.items.length) {
           scoreTxt += " (" + p.items.map(function (it) {
             var t2 = (it.correct || 0) + (it.incorrect || 0);
