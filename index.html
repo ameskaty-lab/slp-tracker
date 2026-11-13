@@ -1023,7 +1023,7 @@ function AssessPanel({ student, templates, onAddTemplate, onRemoveTemplate, onMa
             </div>
           </div>
         )}
-        <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 10, lineHeight: 1.4 }}>Copies are named like "{student.name} {todayKey().slice(0, 7)} WH Questions" and go in the same Drive folder as {student.name}'s notes Doc. "⧉ New copy" duplicates a past assessment with its scores, for re-testing. An assessment you open or mark done gets a link in that day's note — it stays at the top until you mark it done, so it's fine to finish over several sessions.</div>
+        <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 10, lineHeight: 1.4 }}>Copies are named like "{student.name} {todayKey().slice(0, 7)} WH Questions" and go in the same Drive folder as {student.name}'s notes Doc. "⧉ New copy" duplicates a past assessment with its scores, for re-testing. It stays at the top until you mark it done (fine to finish over several sessions), and the link goes in the note on the day you mark it done.</div>
       </div>
     </div>
   );
@@ -4842,8 +4842,8 @@ function App() {
   const isAbsent = !!(selectedStudent && session.absent);
   const absentLine = `${session.absentBy === "clinician" ? "Clinician absent" : "Student absent"}${(session.absentReason || "").trim() ? ` (${session.absentReason.trim()})` : ""}`;
   const makeupLine = selectedStudent && !isAbsent && session.makeupFor ? makeupTag(session.makeupFor) : "";
-  const assessLines = selectedStudent ? (session.assessUsed || []).map(id => (selectedStudent.assessments || []).find(a => a.id === id)).filter(Boolean)
-    .map(a => ({ ...a, doneToday: a.done === todayKey() })) : [];
+  // Only assessments marked done today go in the note.
+  const assessLines = selectedStudent ? (selectedStudent.assessments || []).filter(a => a.done === todayKey()).map(a => ({ ...a, doneToday: true })) : [];
 
   const matStr = (g) => { const u = usedMaterials(g, matLib); return u.length ? `Materials: ${u.join(", ")}` : ""; };
 
