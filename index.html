@@ -65,6 +65,7 @@ const BITE_KINDS = [
 // ================= Google Docs =================
 const GOOGLE_CLIENT_ID = "507523222315-onns107c5iildda99pquau5e2lcmj0b1.apps.googleusercontent.com";
 const GOOGLE_SCOPE = "https://www.googleapis.com/auth/documents";
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"; // only asked for when making assessment copies
 const GTOKEN_KEY = "slp_gtoken";
 const GPENDING_KEY = "slp_gauth_pending";
 const GACCT_OK_KEY = "slp_gacct_ok"; // set once a Doc was reached with the chosen account
@@ -80,11 +81,14 @@ function getGToken() {
   } catch {}
   return null;
 }
+function hasGScope(part) {
+  try { const t = JSON.parse(localStorage.getItem(GTOKEN_KEY) || "null"); return !!(t && t.exp > Date.now() + 60000 && String(t.scope || "").includes(part)); } catch { return false; }
+}
 function clearGToken() { try { localStorage.removeItem(GTOKEN_KEY); } catch {} }
 function forgetGAccount() { try { localStorage.removeItem(GACCT_OK_KEY); localStorage.removeItem(GTOKEN_KEY); } catch {} }
 function rememberGAccount() { try { localStorage.setItem(GACCT_OK_KEY, "1"); } catch {} }
 // Full-page redirect sign-in (pop-ups don't work in iPhone home-screen apps).
-function startGoogleSignIn(pending) {
+function startGoogleSignIn(pending, extraScope) {
   const state = Math.random().toString(36).slice(2) + Date.now().toString(36);
   try { localStorage.setItem(GPENDING_KEY, JSON.stringify({ state, ...(pending || {}) })); } catch {}
   // Must exactly match the redirect URI registered in Google Cloud: ".../slp-tracker/"
@@ -94,7 +98,7 @@ function startGoogleSignIn(pending) {
   const redirect = location.origin + path;
   const url = "https://accounts.google.com/o/oauth2/v2/auth?" + new URLSearchParams({
     client_id: GOOGLE_CLIENT_ID, redirect_uri: redirect, response_type: "token",
-    scope: GOOGLE_SCOPE, include_granted_scopes: "true", state,
+    scope: extraScope ? GOOGLE_SCOPE + " " + extraScope : GOOGLE_SCOPE, include_granted_scopes: "true", state,
     // Show Google's account picker until a send has worked, so the phone's default
     // account isn't used by mistake.
     ...((() => { try { return localStorage.getItem(GACCT_OK_KEY) ? {} : { prompt: "select_account" }; } catch { return { prompt: "select_account" }; } })()),
@@ -111,7 +115,7 @@ function consumeGoogleRedirect() {
   try { history.replaceState(null, "", location.pathname + location.search); } catch {}
   if (p.get("error")) return { error: p.get("error"), pending };
   if (!pending || p.get("state") !== pending.state) return { error: "state", pending: null };
-  try { localStorage.setItem(GTOKEN_KEY, JSON.stringify({ token: p.get("access_token"), exp: Date.now() + Number(p.get("expires_in") || 3600) * 1000 })); } catch {}
+  try { localStorage.setItem(GTOKEN_KEY, JSON.stringify({ token: p.get("access_token"), scope: p.get("scope") || "", exp: Date.now() + Number(p.get("expires_in") || 3600) * 1000 })); } catch {}
   return { ok: true, pending };
 }
 async function gfetch(url, token, body) {
@@ -200,6 +204,10 @@ async function sendNoteToDoc(docId, noteText, token, studentName) {
     { updateTextStyle: { range: { startIndex: at, endIndex: end }, textStyle: { bold: false, italic: false }, fields: "bold,italic" } },
     ...noteStyles(text).map(r => ({ updateTextStyle: { range: { startIndex: at + r.a, endIndex: at + r.b }, textStyle: { [r.st]: true }, fields: r.st } })),
   ];
+  // Make any links (e.g. assessment Docs) clickable.
+  const urlRe = /https:\/\/\S+/g;
+  let um;
+  while ((um = urlRe.exec(text))) reqs.push({ updateTextStyle: { range: { startIndex: at + um.index, endIndex: at + um.index + um[0].length }, textStyle: { link: { url: um[0] } }, fields: "link" } });
   await gfetch(`https://docs.googleapis.com/v1/documents/${docId}:batchUpdate`, token, { requests: reqs });
   return { title: doc.title || "Doc" };
 }
@@ -943,8 +951,81 @@ function ConfirmModal({ message, confirmLabel, confirmColor, onConfirm, onCancel
   );
 }
 
+// ---- Assessments: template library + a copy per student ----
+const docUrl = (id) => `https://docs.google.com/document/d/${id}/edit`;
+function AssessPanel({ student, templates, onAddTemplate, onRemoveTemplate, onMakeCopy, onLinkExisting, onSetDone, onRemove, onOpen, onClose, busy }) {
+  const [addT, setAddT] = useState(false);
+  const [tName, setTName] = useState("");
+  const [tLink, setTLink] = useState("");
+  const [linkMode, setLinkMode] = useState(false);
+  const [lName, setLName] = useState("");
+  const [lLink, setLLink] = useState("");
+  const list = student.assessments || [];
+  const inp = { width: "100%", boxSizing: "border-box", border: "1.5px solid #e2e8f0", borderRadius: 8, padding: "7px 9px", fontSize: 13, fontFamily: "inherit", outline: "none", marginBottom: 6 };
+  const sm = (bg, c, bd) => ({ padding: "5px 10px", borderRadius: 8, border: `1.5px solid ${bd || bg}`, background: bg, color: c, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textDecoration: "none", whiteSpace: "nowrap" });
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, padding: "16px", width: "92%", maxWidth: 420, maxHeight: "86vh", overflowY: "auto", boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}>
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
+          <span style={{ fontSize: 15, fontWeight: 800, color: "#1e293b", flex: 1 }}>📋 Assessments · {student.name}</span>
+          <button onClick={onClose} style={sm("#f8fafc", "#64748b", "#e2e8f0")}>Done</button>
+        </div>
+
+        {list.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            {list.map(a => (
+              <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 0", borderBottom: "1px solid #f1f5f9" }}>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: a.done ? "#94a3b8" : "#1e293b", textDecoration: a.done ? "line-through" : "none" }}>{a.name}</span>
+                <a href={docUrl(a.docId)} target="_blank" rel="noreferrer" onClick={() => onOpen(a.id)} style={sm("#eef2ff", "#4f46e5", "#c7d2fe")}>Open ↗</a>
+                <button onClick={() => onSetDone(a.id, !a.done)} style={sm(a.done ? "#dcfce7" : "#fff", a.done ? "#16a34a" : "#64748b", a.done ? "#86efac" : "#e2e8f0")}>{a.done ? "✓ Done" : "Done?"}</button>
+                <button onClick={() => { if (window.confirm(`Remove "${a.name}" from ${student.name}? (The Google Doc itself isn't deleted.)`)) onRemove(a.id); }} style={sm("#fff5f5", "#ef4444", "#fecaca")}>✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#94a3b8", marginBottom: 6 }}>Make a copy for {student.name}</div>
+        {templates.length === 0 && <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 6 }}>No templates yet — add one below.</div>}
+        {templates.map(t => (
+          <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+            <button disabled={busy} onClick={() => onMakeCopy(t)} style={{ flex: 1, textAlign: "left", padding: "9px 10px", borderRadius: 10, border: "1.5px solid #c7d2fe", background: "#f5f3ff", color: "#3730a3", fontSize: 13, fontWeight: 700, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>＋ {t.name}</button>
+            <a href={docUrl(t.docId)} target="_blank" rel="noreferrer" title="Open template" style={sm("#fff", "#94a3b8", "#e2e8f0")}>↗</a>
+            <button onClick={() => { if (window.confirm(`Remove the "${t.name}" template from the list?`)) onRemoveTemplate(t.id); }} style={sm("#fff", "#cbd5e1", "#e2e8f0")}>✕</button>
+          </div>
+        ))}
+        {!addT ? (
+          <button onClick={() => setAddT(true)} style={{ ...sm("#fff", "#4f46e5", "#c7d2fe"), borderStyle: "dashed", marginBottom: 10 }}>+ Add a template</button>
+        ) : (
+          <div style={{ background: "#f8fafc", border: "1.5px solid #e2e8f0", borderRadius: 10, padding: 8, marginBottom: 10 }}>
+            <input value={tName} onChange={e => setTName(e.target.value)} placeholder="Name (e.g., WH Questions)" style={inp} />
+            <input value={tLink} onChange={e => setTLink(e.target.value)} placeholder="Template Doc link" style={inp} />
+            <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={() => { const id = docIdFrom(tLink); if (tName.trim() && id) { onAddTemplate(tName.trim(), id); setTName(""); setTLink(""); setAddT(false); } }} style={sm("#4f46e5", "#fff")}>Save template</button>
+              <button onClick={() => setAddT(false)} style={sm("#fff", "#64748b", "#e2e8f0")}>Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {!linkMode ? (
+          <button onClick={() => setLinkMode(true)} style={{ ...sm("#fff", "#64748b", "#e2e8f0"), display: "block" }}>Already made a copy? Paste its link</button>
+        ) : (
+          <div style={{ background: "#f8fafc", border: "1.5px solid #e2e8f0", borderRadius: 10, padding: 8 }}>
+            <input value={lName} onChange={e => setLName(e.target.value)} placeholder="Name (e.g., HELP 0-3)" style={inp} />
+            <input value={lLink} onChange={e => setLLink(e.target.value)} placeholder={`Link to ${student.name}'s copy`} style={inp} />
+            <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={() => { const id = docIdFrom(lLink); if (lName.trim() && id) { onLinkExisting(lName.trim(), id); setLName(""); setLLink(""); setLinkMode(false); } }} style={sm("#4f46e5", "#fff")}>Add</button>
+              <button onClick={() => setLinkMode(false)} style={sm("#fff", "#64748b", "#e2e8f0")}>Cancel</button>
+            </div>
+          </div>
+        )}
+        <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 10, lineHeight: 1.4 }}>Copies go in the same Drive folder as {student.name}'s notes Doc. An assessment you open or mark done gets a link in that day's note.</div>
+      </div>
+    </div>
+  );
+}
+
 // Highly motivating items for one student — optional, stays at the top until changed.
-function Motivators({ student, onChange }) {
+function Motivators({ student, onChange, onAssess, assessCount }) {
   const [adding, setAdding] = useState(false);
   const list = Array.isArray(student.motivators) ? student.motivators : [];
   const add = (txt) => {
@@ -955,10 +1036,14 @@ function Motivators({ student, onChange }) {
     <PromptModal title={`Motivating items for ${student.name}`} placeholder="e.g., bubbles, Paw Patrol, spinning top (separate with commas)"
       onSubmit={(v) => { add(v); setAdding(false); }} onCancel={() => setAdding(false)} />
   );
+  const assessBtn = onAssess && (
+    <button onClick={onAssess} style={{ padding: "3px 10px", borderRadius: 999, border: "1.5px dashed #c4b5fd", background: "#fff", color: "#7c3aed", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>📋 Assessments{assessCount ? ` (${assessCount})` : ""}</button>
+  );
   if (!list.length) return (
-    <div style={{ marginBottom: 10 }}>
+    <div style={{ marginBottom: 10, display: "flex", gap: 6, flexWrap: "wrap" }}>
       {modal}
       <button onClick={() => setAdding(true)} style={{ padding: "3px 10px", borderRadius: 999, border: "1.5px dashed #fcd34d", background: "#fff", color: "#b45309", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Motivating items</button>
+      {assessBtn}
     </div>
   );
   return (
@@ -973,6 +1058,7 @@ function Motivators({ student, onChange }) {
           </span>
         ))}
         <button onClick={() => setAdding(true)} style={{ padding: "2px 9px", borderRadius: 999, border: "1.5px dashed #fcd34d", background: "transparent", color: "#b45309", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+</button>
+        {assessBtn && <span style={{ marginLeft: "auto" }}>{assessBtn}</span>}
       </div>
     </div>
   );
@@ -2067,7 +2153,7 @@ function MonthlyUpdates({ roster, monthly, setMonthly, onLoadDoc, onSetFirstName
   );
 }
 
-function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, schedule, setDayIds, matLib, setLib, onOpenStudent, onClose, sessions, onToggleAbsent, doneIds, onUndoDone, onClinicianAbsent, onApplyGoals, onRestoreGoal, onDeleteArchived, onSendMonth, initialTab, monthly, setMonthly, onLoadMonthly, onSetFirstName, monthlyStatus, onSendUpdate, onLinkUpdateDoc, onSetPerMonth, archivedStudents, onSetMakeup }) {
+function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, schedule, setDayIds, matLib, setLib, onOpenStudent, onClose, sessions, onToggleAbsent, doneIds, onUndoDone, onClinicianAbsent, onApplyGoals, onRestoreGoal, onDeleteArchived, onSendMonth, initialTab, monthly, setMonthly, onLoadMonthly, onSetFirstName, monthlyStatus, onSendUpdate, onLinkUpdateDoc, onSetPerMonth, archivedStudents, onSetMakeup, onOpenAssess }) {
   const [tab, setTab] = useState(initialTab || "today");
   const [makeupPick, setMakeupPick] = useState(null);
   const wd = new Date().getDay();
@@ -2103,6 +2189,7 @@ function PlanPanel({ roster, todayIds, overrideActive, setTodayIds, resetToday, 
             <>
               <button onClick={() => onToggleAbsent(s.id, "student")} title="Student absent" style={smallBtn}>🚫</button>
               <button onClick={() => onToggleAbsent(s.id, "clinician")} title="I missed this session" style={smallBtn}>🩺</button>
+              <button onClick={() => onOpenAssess(s.id)} title="Assessments" style={{ ...smallBtn, color: "#7c3aed", borderColor: "#ddd6fe", ...((s.assessments || []).some(a => !a.done) ? { background: "#f5f3ff" } : {}) }}>📋{(s.assessments || []).some(a => !a.done) ? " " + (s.assessments || []).filter(a => !a.done).length : ""}</button>
               <button onClick={() => setMakeupPick(makeupPick === s.id ? null : s.id)} title="Mark as a makeup"
                 style={{ ...smallBtn, ...(mk ? { background: "#0ea5e9", borderColor: "#0ea5e9", color: "#fff" } : { color: "#0369a1", borderColor: "#bae6fd" }) }}>🔁{mk ? " ✓" : ""}</button>
             </>
@@ -4039,7 +4126,7 @@ function loadStore() {
         const sessions = {};
         Object.keys(parsed.sessions).forEach(k => {
           const sess = parsed.sessions[k] || {};
-          sessions[k] = { goals: (sess.goals || []).map(normalizeGoalFields), reinforcers: sess.reinforcers || "", parentNote: sess.parentNote || "", startedAt: sess.startedAt || null, bcbaInclude: !!sess.bcbaInclude, absent: !!sess.absent, absentReason: sess.absentReason || "", absentDate: sess.absentDate || "", makeupFor: sess.makeupFor || "", absentBy: sess.absentBy === "clinician" ? "clinician" : "", goalUpdates: Array.isArray(sess.goalUpdates) ? sess.goalUpdates.filter(u => u && typeof u.text === "string") : [], sentToDoc: !!sess.sentToDoc, copied: !!sess.copied };
+          sessions[k] = { goals: (sess.goals || []).map(normalizeGoalFields), reinforcers: sess.reinforcers || "", parentNote: sess.parentNote || "", startedAt: sess.startedAt || null, bcbaInclude: !!sess.bcbaInclude, absent: !!sess.absent, absentReason: sess.absentReason || "", absentDate: sess.absentDate || "", makeupFor: sess.makeupFor || "", absentBy: sess.absentBy === "clinician" ? "clinician" : "", goalUpdates: Array.isArray(sess.goalUpdates) ? sess.goalUpdates.filter(u => u && typeof u.text === "string") : [], sentToDoc: !!sess.sentToDoc, copied: !!sess.copied, assessUsed: Array.isArray(sess.assessUsed) ? sess.assessUsed : [] };
         });
         return { roster, selectedId: parsed.selectedId || "quick", sessions, ...planFields(parsed) };
       }
@@ -4085,7 +4172,8 @@ function planFields(parsed) {
   const archivedStudents = (Array.isArray(parsed.archivedStudents) ? parsed.archivedStudents : [])
     .filter(s => s && typeof s.id === "string" && typeof s.name === "string")
     .map(s => ({ ...s, history: Array.isArray(s.history) ? s.history : [], goals: Array.isArray(s.goals) ? s.goals : [] }));
-  return { matLib, schedule, dayOverride, dayDone, monthly, archivedStudents };
+  const assessTemplates = (Array.isArray(parsed.assessTemplates) ? parsed.assessTemplates : []).filter(t => t && typeof t.docId === "string" && typeof t.name === "string");
+  return { matLib, schedule, dayOverride, dayDone, monthly, archivedStudents, assessTemplates };
 }
 
 function App() {
@@ -4287,6 +4375,10 @@ function App() {
     ...prev,
     roster: prev.roster.map(s => (s.id === prev.selectedId ? { ...s, notes: val } : s)),
   }));
+  const [assessFor, setAssessFor] = useState(null);
+  const setAssessment = (sid, aid, fields) => setStore(prev => ({ ...prev, roster: prev.roster.map(s => s.id !== sid ? s : { ...s, assessments: (s.assessments || []).map(a => a.id === aid ? { ...a, ...fields } : a) }) }));
+  const markAssessUsed = (aid) => setSession(prev => ((prev.assessUsed || []).includes(aid) ? prev : { ...prev, assessUsed: [...(prev.assessUsed || []), aid] }));
+  const addAssessment = (sid, name, docId) => setStore(prev => ({ ...prev, roster: prev.roster.map(s => s.id !== sid ? s : { ...s, assessments: [...(s.assessments || []), { id: makeId("as"), name, docId, at: new Date().toISOString(), done: "" }] }) }));
   const setStudentField = (id, field, val) => setStore(prev => ({
     ...prev,
     roster: prev.roster.map(s => (s.id === id ? { ...s, [field]: val } : s)),
@@ -4493,9 +4585,10 @@ function App() {
   const shareRoster = async () => {
     const payload = JSON.stringify({
       slpRoster: 1,
-      students: roster.map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "", owed: owedOf(s), archived: s.archived || [], docId: s.docId || "", updateDocId: s.updateDocId || "", firstName: s.firstName || "", pron: s.pron || "", perMonth: s.perMonth || 0, goalsAt: s.goalsAt || 0, restoredAt: s.restoredAt || "", motivators: s.motivators || [], notes: s.notes || "", notesHi: !!s.notesHi })),
+      students: roster.map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "", owed: owedOf(s), archived: s.archived || [], docId: s.docId || "", updateDocId: s.updateDocId || "", firstName: s.firstName || "", pron: s.pron || "", perMonth: s.perMonth || 0, goalsAt: s.goalsAt || 0, restoredAt: s.restoredAt || "", assessments: s.assessments || [], motivators: s.motivators || [], notes: s.notes || "", notesHi: !!s.notesHi })),
       archivedStudents: (store.archivedStudents || []).map(s => ({ name: s.name, goals: s.goals || [], history: s.history || [], building: s.building || "", owed: owedOf(s), archived: s.archived || [], docId: s.docId || "", updateDocId: s.updateDocId || "", firstName: s.firstName || "", pron: s.pron || "", perMonth: s.perMonth || 0, archivedAt: s.archivedAt || "" })),
       matLib,
+      assessTemplates: store.assessTemplates || [],
       today: (overrideActive || doneIds.length) ? { date: todayKey(), changed: overrideActive, names: todayIds.map(id => (roster.find(s => s.id === id) || {}).name).filter(Boolean), done: doneIds.map(id => (roster.find(s => s.id === id) || {}).name).filter(Boolean) } : null,
       schedule: Object.fromEntries(WEEKDAYS.map(({ d }) => [d, ((store.schedule || {})[d] || []).map(id => (roster.find(s => s.id === id) || {}).name).filter(Boolean)])),
     });
@@ -4589,7 +4682,7 @@ function App() {
         const inBuilding = typeof s.building === "string" ? s.building.trim() : "";
         const inOwed = (Array.isArray(s.owed) ? s.owed : []).filter(d => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d));
         if (idx === -1) {
-          newRoster.push({ id: makeId("student"), name: s.name.trim(), goals: inGoals, history: inHist.slice(-40), building: inBuilding, owed: [...new Set(inOwed)].sort(), docId: typeof s.docId === "string" ? s.docId : "", archived: (Array.isArray(s.archived) ? s.archived : []).filter(a => a && typeof a.tid === "string"), updateDocId: typeof s.updateDocId === "string" ? s.updateDocId : "", firstName: typeof s.firstName === "string" ? s.firstName : "", pron: typeof s.pron === "string" ? s.pron : "", perMonth: typeof s.perMonth === "number" ? s.perMonth : 0, motivators: Array.isArray(s.motivators) ? s.motivators.filter(x => typeof x === "string") : [], notes: typeof s.notes === "string" ? s.notes : "", notesHi: !!s.notesHi });
+          newRoster.push({ id: makeId("student"), name: s.name.trim(), goals: inGoals, history: inHist.slice(-40), building: inBuilding, owed: [...new Set(inOwed)].sort(), docId: typeof s.docId === "string" ? s.docId : "", archived: (Array.isArray(s.archived) ? s.archived : []).filter(a => a && typeof a.tid === "string"), updateDocId: typeof s.updateDocId === "string" ? s.updateDocId : "", firstName: typeof s.firstName === "string" ? s.firstName : "", pron: typeof s.pron === "string" ? s.pron : "", perMonth: typeof s.perMonth === "number" ? s.perMonth : 0, motivators: Array.isArray(s.motivators) ? s.motivators.filter(x => typeof x === "string") : [], notes: typeof s.notes === "string" ? s.notes : "", notesHi: !!s.notesHi, assessments: Array.isArray(s.assessments) ? s.assessments.filter(a => a && typeof a.docId === "string") : [] });
           added++;
           newSessions += inHist.length;
           return;
@@ -4646,6 +4739,15 @@ function App() {
           updateDocId: local.updateDocId || (typeof s.updateDocId === "string" ? s.updateDocId : ""),
           firstName: local.firstName || (typeof s.firstName === "string" ? s.firstName : ""),
           pron: local.pron || (typeof s.pron === "string" ? s.pron : ""),
+          assessments: (() => {
+            const mine = [...(local.assessments || [])];
+            (Array.isArray(s.assessments) ? s.assessments : []).forEach(a => {
+              if (!a || typeof a.docId !== "string") return;
+              const k = mine.findIndex(m => m.docId === a.docId);
+              if (k === -1) mine.push(a); else if (a.done && !mine[k].done) mine[k] = { ...mine[k], done: a.done };
+            });
+            return mine;
+          })(),
           motivators: (local.motivators || []).length ? local.motivators : (Array.isArray(s.motivators) ? s.motivators.filter(x => typeof x === "string") : []),
           notes: (local.notes || "").trim() ? local.notes : (typeof s.notes === "string" ? s.notes : ""),
           notesHi: local.notesHi || !!s.notesHi,
@@ -4714,6 +4816,7 @@ function App() {
       if (added === 0 && merged === 0 && libAdded === 0 && schedFilled === 0 && linksAdded === 0 && settingsChanged === 0 && archAdded === 0 && !todayPlan && archMoved === 0 && restoredHere === 0) {
         return { ok: false, text: "Nothing new in that code (already in sync?)" };
       }
+      const inTpl = (Array.isArray(parsed.assessTemplates) ? parsed.assessTemplates : []).filter(t => t && typeof t.docId === "string" && !(store.assessTemplates || []).some(m => m.docId === t.docId));
       setStore(prev => {
         const sessions = { ...prev.sessions };
         goalsSynced.forEach(id => {
@@ -4722,7 +4825,7 @@ function App() {
         });
         const live = new Set(newRoster.map(r => r.id));
         const sel = live.has(prev.selectedId) ? prev.selectedId : "quick";
-        return { ...prev, roster: newRoster, matLib: newLib, schedule: newSchedule, archivedStudents: newArchived, sessions, selectedId: sel, ...(todayPlan || {}) };
+        return { ...prev, roster: newRoster, matLib: newLib, schedule: newSchedule, archivedStudents: newArchived, sessions, selectedId: sel, assessTemplates: [...(prev.assessTemplates || []), ...inTpl], ...(todayPlan || {}) };
       });
       return { ok: true, text: `✓ ${added} added, ${merged} merged, ${newSessions} session${newSessions === 1 ? "" : "s"} synced${linksAdded ? `, ${linksAdded} Doc link${linksAdded === 1 ? "" : "s"} added` : ""}${archAdded ? `, ${archAdded} archived` : ""}${todayPlan ? ", today's plan copied" : ""}${archMoved ? `, ${archMoved} archived to match` : ""}${restoredHere ? `, ${restoredHere} restored to match` : ""}${keptArchived ? ` (${keptArchived} kept archived)` : ""}` };
     } catch {
@@ -4734,6 +4837,8 @@ function App() {
   const isAbsent = !!(selectedStudent && session.absent);
   const absentLine = `${session.absentBy === "clinician" ? "Clinician absent" : "Student absent"}${(session.absentReason || "").trim() ? ` (${session.absentReason.trim()})` : ""}`;
   const makeupLine = selectedStudent && !isAbsent && session.makeupFor ? makeupTag(session.makeupFor) : "";
+  const assessLines = selectedStudent ? (session.assessUsed || []).map(id => (selectedStudent.assessments || []).find(a => a.id === id)).filter(Boolean)
+    .map(a => ({ ...a, doneToday: a.done === todayKey() })) : [];
 
   const matStr = (g) => { const u = usedMaterials(g, matLib); return u.length ? `Materials: ${u.join(", ")}` : ""; };
 
@@ -4749,6 +4854,7 @@ function App() {
       return h;
     }
     let html = `<p><strong>${dateStr}</strong>${makeupLine ? ` — ${makeupLine}` : ""}</p>`;
+    assessLines.forEach(a => { html += `<p>📋 Assessment: <a href="${docUrl(a.docId)}">${a.name}</a>${a.doneToday ? " (completed)" : ""}</p>`; });
     goals.filter(g => !g.skipped && !isEnding(g) && (goalHasData(g) || (g.notes || "").trim() || matStr(g) || helpStr(g))).forEach((g, i) => {
       const label = `${g.status === "screening" ? "Screening: " : ""}${g.label || `Goal ${i + 1}`}`;
       // Goal with a note and/or materials but no data: copy just those.
@@ -4843,6 +4949,7 @@ function App() {
       return out.join("\n");
     }
     let lines = [makeupLine ? `${dateStr} — ${makeupLine}` : dateStr, ""];
+    if (assessLines.length) { assessLines.forEach(a => lines.push(`Assessment: ${a.name}${a.doneToday ? " (completed)" : ""} — ${docUrl(a.docId)}`)); lines.push(""); }
     goals.filter(g => !g.skipped && !isEnding(g) && (goalHasData(g) || (g.notes || "").trim() || matStr(g) || helpStr(g))).forEach((g, i) => {
       const label = `${g.status === "screening" ? "Screening: " : ""}${g.label || `Goal ${i + 1}`}`;
       // Goal with a note and/or materials but no data: copy just those.
@@ -4925,7 +5032,23 @@ function App() {
   const markSent = (sid) => setStore(prev => (prev.sessions[sid] ? { ...prev, sessions: { ...prev.sessions, [sid]: { ...prev.sessions[sid], sentToDoc: true } } } : prev));
   const runDocJob = async (job) => {
     const token = getGToken();
-    if (!token) { startGoogleSignIn(job); return; }
+    if (!token) { startGoogleSignIn(job, job.kind === "copyAssess" ? DRIVE_SCOPE : undefined); return; }
+    if (job.kind === "copyAssess" && !hasGScope("auth/drive")) { startGoogleSignIn(job, DRIVE_SCOPE); return; }
+    if (job.kind === "copyAssess") {
+      setDocStatus({ sid: job.sid, ok: null, msg: `Making ${job.copyName}…` });
+      try {
+        let parents;
+        if (job.notesDocId) { try { const f = await gfetch(`https://www.googleapis.com/drive/v3/files/${job.notesDocId}?fields=parents`, token); if (f && Array.isArray(f.parents)) parents = f.parents; } catch {} }
+        const r = await gfetch(`https://www.googleapis.com/drive/v3/files/${job.templateId}/copy?fields=id,name`, token, { name: job.copyName, ...(parents ? { parents } : {}) });
+        rememberGAccount();
+        addAssessment(job.sid, job.label, r.id);
+        setDocStatus({ sid: job.sid, ok: true, msg: `✓ Made "${r.name}" — it's at the top of ${job.studentName}'s screen` });
+      } catch (e) {
+        setDocStatus({ sid: job.sid, ok: false, msg: e.code === 401 ? "Google sign-in expired — tap the template again." : e.code === 403 || e.code === 404 ? `Couldn't copy that template (error ${e.code}). Check the template link, and that Google gave the app Drive permission.` : "Couldn't make the copy — check your connection and try again." });
+        if (e.code === 401) clearGToken();
+      }
+      return;
+    }
     setDocStatus({ sid: job.sid, ok: null, msg: job.kind === "update" ? "Sending to parent Doc…" : job.kind === "loadMonthly" ? "Loading updates…" : job.kind === "month" ? "Sending goal list…" : "Sending to Doc…" });
     try {
       if (job.kind === "update") {
@@ -4986,7 +5109,7 @@ function App() {
       return;
     }
     if (gAuth.pending && gAuth.pending.kind) {
-      if (gAuth.pending.kind === "note" && gAuth.pending.sid) selectStudent(gAuth.pending.sid);
+      if ((gAuth.pending.kind === "note" || gAuth.pending.kind === "copyAssess") && gAuth.pending.sid) selectStudent(gAuth.pending.sid);
       if (gAuth.pending.kind === "loadMonthly" || gAuth.pending.kind === "update") { setPlanTab("updates"); setShowPlan(true); }
       runDocJob(gAuth.pending);
     }
@@ -5200,6 +5323,26 @@ function App() {
         }}>{docStatus.msg} <span style={{ opacity: 0.8, fontWeight: 600 }}>· tap to close</span></div>
       )}
 
+      {assessFor && (() => {
+        const st = roster.find(r => r.id === assessFor);
+        if (!st) return null;
+        return (
+          <AssessPanel student={st} templates={store.assessTemplates || []}
+            busy={docStatus && docStatus.ok === null}
+            onClose={() => setAssessFor(null)}
+            onAddTemplate={(name, docId) => setStore(prev => ({ ...prev, assessTemplates: [...(prev.assessTemplates || []), { id: makeId("tpl"), name, docId }] }))}
+            onRemoveTemplate={(id) => setStore(prev => ({ ...prev, assessTemplates: (prev.assessTemplates || []).filter(t => t.id !== id) }))}
+            onMakeCopy={(t) => {
+              const d = new Date();
+              runDocJob({ kind: "copyAssess", sid: st.id, studentName: st.name, templateId: t.docId, label: t.name, notesDocId: st.docId || "", copyName: `${st.name} – ${t.name} – ${d.getMonth() + 1}/${d.getDate()}` });
+            }}
+            onLinkExisting={(name, docId) => addAssessment(st.id, name, docId)}
+            onSetDone={(aid, on) => { setAssessment(st.id, aid, { done: on ? todayKey() : "" }); if (on && st.id === selectedId) markAssessUsed(aid); }}
+            onRemove={(aid) => setStore(prev => ({ ...prev, roster: prev.roster.map(s => s.id !== st.id ? s : { ...s, assessments: (s.assessments || []).filter(a => a.id !== aid) }) }))}
+            onOpen={(aid) => { if (st.id === selectedId) markAssessUsed(aid); }}
+          />
+        );
+      })()}
       {showPlan && (
         <PlanPanel
           roster={roster}
@@ -5232,6 +5375,7 @@ function App() {
             if (already && !window.confirm("This update is already in the parent Doc. Send it again?")) return;
             runDocJob({ kind: "update", sid: "monthly", key: it.key, docId: it.student.updateDocId, title: it.title, tables, force: already });
           }}
+          onOpenAssess={(id) => setAssessFor(id)}
           onSetMakeup={(id, v) => setStore(prev => ({ ...prev, sessions: { ...prev.sessions, [id]: { ...sessionFor(prev, id), makeupFor: v } } }))}
           onSetPerMonth={(id, n) => setStore(prev => ({ ...prev, roster: prev.roster.map(s => s.id === id ? { ...s, perMonth: n } : s) }))}
           onLinkUpdateDoc={(id, docId) => setStore(prev => ({ ...prev, roster: prev.roster.map(s => s.id === id ? { ...s, updateDocId: docId } : s), archivedStudents: (prev.archivedStudents || []).map(s => s.id === id ? { ...s, updateDocId: docId } : s) }))}
@@ -5342,7 +5486,14 @@ function App() {
             />
           </div>
         )}
-        {selectedStudent && <Motivators key={selectedStudent.id} student={selectedStudent} onChange={(list) => setStudentField(selectedStudent.id, "motivators", list)} />}
+        {selectedStudent && (selectedStudent.assessments || []).filter(a => !a.done).map(a => (
+          <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, background: "#f5f3ff", border: "2px solid #a78bfa", borderRadius: 12, padding: "9px 11px" }}>
+            <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 800, color: "#5b21b6" }}>📋 Do first: {a.name}</span>
+            <a href={docUrl(a.docId)} target="_blank" rel="noreferrer" onClick={() => markAssessUsed(a.id)} style={{ padding: "6px 12px", borderRadius: 8, background: "#7c3aed", color: "#fff", fontSize: 13, fontWeight: 700, textDecoration: "none", whiteSpace: "nowrap" }}>Open ↗</a>
+            <button onClick={() => { setAssessment(selectedStudent.id, a.id, { done: todayKey() }); markAssessUsed(a.id); }} style={{ padding: "6px 10px", borderRadius: 8, border: "1.5px solid #c4b5fd", background: "#fff", color: "#7c3aed", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>✓ Done</button>
+          </div>
+        ))}
+        {selectedStudent && <Motivators key={selectedStudent.id} student={selectedStudent} onChange={(list) => setStudentField(selectedStudent.id, "motivators", list)} onAssess={() => setAssessFor(selectedStudent.id)} assessCount={(selectedStudent.assessments || []).length} />}
         {selectedStudent && (
           <div style={{ marginBottom: 12 }}>
             <div style={{ display: "flex", gap: 8 }}>
@@ -5597,6 +5748,9 @@ function App() {
           {makeupLine && (
             <div style={{ fontSize: 13, color: "#7dd3fc", fontWeight: 700, marginBottom: 8 }}>🔁 {makeupLine}</div>
           )}
+          {assessLines.map(a => (
+            <div key={a.id} style={{ fontSize: 13, color: "#c4b5fd", fontWeight: 700, marginBottom: 8 }}>📋 Assessment: {a.name}{a.doneToday ? " (completed)" : ""}</div>
+          ))}
           {!isAbsent && goals.filter(g => !g.skipped && !isEnding(g) && (goalHasData(g) || (g.notes || "").trim() || matStr(g) || helpStr(g))).map((g, i) => <SummaryLine key={g.id} goal={g} index={i} />)}
           {(session.goalUpdates || []).map(u => (
             <div key={u.tid} style={{ fontSize: 13, color: "#fde68a", fontWeight: 700, marginBottom: 8 }}>{u.text}</div>
