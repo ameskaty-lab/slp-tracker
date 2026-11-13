@@ -953,7 +953,7 @@ function ConfirmModal({ message, confirmLabel, confirmColor, onConfirm, onCancel
 
 // ---- Assessments: template library + a copy per student ----
 const docUrl = (id) => `https://docs.google.com/document/d/${id}/edit`;
-function AssessPanel({ student, templates, onAddTemplate, onRemoveTemplate, onMakeCopy, onLinkExisting, onSetDone, onRemove, onOpen, onClose, busy }) {
+function AssessPanel({ student, templates, onAddTemplate, onRemoveTemplate, onMakeCopy, onDuplicate, onLinkExisting, onSetDone, onRemove, onOpen, onClose, busy }) {
   const [addT, setAddT] = useState(false);
   const [tName, setTName] = useState("");
   const [tLink, setTLink] = useState("");
@@ -973,9 +973,14 @@ function AssessPanel({ student, templates, onAddTemplate, onRemoveTemplate, onMa
 
         {list.length > 0 && (
           <div style={{ marginBottom: 12 }}>
-            {list.map(a => (
-              <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 0", borderBottom: "1px solid #f1f5f9" }}>
-                <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: a.done ? "#94a3b8" : "#1e293b", textDecoration: a.done ? "line-through" : "none" }}>{a.name}</span>
+            <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: "#94a3b8", marginBottom: 2 }}>{student.name}'s assessments</div>
+            {[...list].sort((x, y) => (!!x.done - !!y.done) || String(y.month || y.at || "").localeCompare(String(x.month || x.at || ""))).map(a => (
+              <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 0", borderBottom: "1px solid #f1f5f9", flexWrap: "wrap" }}>
+                <span style={{ flex: "1 1 120px", minWidth: 0, fontSize: 13, fontWeight: 700, color: a.done ? "#64748b" : "#1e293b" }}>
+                  {a.name}
+                  <span style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#94a3b8" }}>{a.month || (a.at || "").slice(0, 7)}{a.done ? ` · finished ${shortDate(a.done)}` : " · in progress"}</span>
+                </span>
+                <button disabled={busy} onClick={() => onDuplicate(a)} title="Make a new copy with these scores, named with this month" style={sm("#fff", "#7c3aed", "#ddd6fe")}>⧉ New copy</button>
                 <a href={docUrl(a.docId)} target="_blank" rel="noreferrer" onClick={() => onOpen(a.id)} style={sm("#eef2ff", "#4f46e5", "#c7d2fe")}>Open ↗</a>
                 <button onClick={() => onSetDone(a.id, !a.done)} style={sm(a.done ? "#dcfce7" : "#fff", a.done ? "#16a34a" : "#64748b", a.done ? "#86efac" : "#e2e8f0")}>{a.done ? "✓ Done" : "Done?"}</button>
                 <button onClick={() => { if (window.confirm(`Remove "${a.name}" from ${student.name}? (The Google Doc itself isn't deleted.)`)) onRemove(a.id); }} style={sm("#fff5f5", "#ef4444", "#fecaca")}>✕</button>
@@ -1018,7 +1023,7 @@ function AssessPanel({ student, templates, onAddTemplate, onRemoveTemplate, onMa
             </div>
           </div>
         )}
-        <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 10, lineHeight: 1.4 }}>Copies go in the same Drive folder as {student.name}'s notes Doc. An assessment you open or mark done gets a link in that day's note.</div>
+        <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 10, lineHeight: 1.4 }}>Copies are named like "{student.name} {todayKey().slice(0, 7)} WH Questions" and go in the same Drive folder as {student.name}'s notes Doc. "⧉ New copy" duplicates a past assessment with its scores, for re-testing. An assessment you open or mark done gets a link in that day's note — it stays at the top until you mark it done, so it's fine to finish over several sessions.</div>
       </div>
     </div>
   );
@@ -4378,7 +4383,7 @@ function App() {
   const [assessFor, setAssessFor] = useState(null);
   const setAssessment = (sid, aid, fields) => setStore(prev => ({ ...prev, roster: prev.roster.map(s => s.id !== sid ? s : { ...s, assessments: (s.assessments || []).map(a => a.id === aid ? { ...a, ...fields } : a) }) }));
   const markAssessUsed = (aid) => setSession(prev => ((prev.assessUsed || []).includes(aid) ? prev : { ...prev, assessUsed: [...(prev.assessUsed || []), aid] }));
-  const addAssessment = (sid, name, docId) => setStore(prev => ({ ...prev, roster: prev.roster.map(s => s.id !== sid ? s : { ...s, assessments: [...(s.assessments || []), { id: makeId("as"), name, docId, at: new Date().toISOString(), done: "" }] }) }));
+  const addAssessment = (sid, name, docId, month) => setStore(prev => ({ ...prev, roster: prev.roster.map(s => s.id !== sid ? s : { ...s, assessments: [...(s.assessments || []), { id: makeId("as"), name, docId, month: month || todayKey().slice(0, 7), at: new Date().toISOString(), done: "" }] }) }));
   const setStudentField = (id, field, val) => setStore(prev => ({
     ...prev,
     roster: prev.roster.map(s => (s.id === id ? { ...s, [field]: val } : s)),
@@ -5041,7 +5046,7 @@ function App() {
         if (job.notesDocId) { try { const f = await gfetch(`https://www.googleapis.com/drive/v3/files/${job.notesDocId}?fields=parents`, token); if (f && Array.isArray(f.parents)) parents = f.parents; } catch {} }
         const r = await gfetch(`https://www.googleapis.com/drive/v3/files/${job.templateId}/copy?fields=id,name`, token, { name: job.copyName, ...(parents ? { parents } : {}) });
         rememberGAccount();
-        addAssessment(job.sid, job.label, r.id);
+        addAssessment(job.sid, job.label, r.id, job.month);
         setDocStatus({ sid: job.sid, ok: true, msg: `✓ Made "${r.name}" — it's at the top of ${job.studentName}'s screen` });
       } catch (e) {
         setDocStatus({ sid: job.sid, ok: false, msg: e.code === 401 ? "Google sign-in expired — tap the template again." : e.code === 403 || e.code === 404 ? `Couldn't copy that template (error ${e.code}). Check the template link, and that Google gave the app Drive permission.` : "Couldn't make the copy — check your connection and try again." });
@@ -5334,7 +5339,12 @@ function App() {
             onRemoveTemplate={(id) => setStore(prev => ({ ...prev, assessTemplates: (prev.assessTemplates || []).filter(t => t.id !== id) }))}
             onMakeCopy={(t) => {
               const d = new Date();
-              runDocJob({ kind: "copyAssess", sid: st.id, studentName: st.name, templateId: t.docId, label: t.name, notesDocId: st.docId || "", copyName: `${st.name} – ${t.name} – ${d.getMonth() + 1}/${d.getDate()}` });
+              const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+              runDocJob({ kind: "copyAssess", sid: st.id, studentName: st.name, templateId: t.docId, label: t.name, month: ym, notesDocId: st.docId || "", copyName: `${st.name} ${ym} ${t.name}` });
+            }}
+            onDuplicate={(a) => {
+              const ym = todayKey().slice(0, 7);
+              runDocJob({ kind: "copyAssess", sid: st.id, studentName: st.name, templateId: a.docId, label: a.name, month: ym, notesDocId: st.docId || "", copyName: `${st.name} ${ym} ${a.name}` });
             }}
             onLinkExisting={(name, docId) => addAssessment(st.id, name, docId)}
             onSetDone={(aid, on) => { setAssessment(st.id, aid, { done: on ? todayKey() : "" }); if (on && st.id === selectedId) markAssessUsed(aid); }}
