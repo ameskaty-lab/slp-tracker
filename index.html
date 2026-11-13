@@ -4761,7 +4761,8 @@ function App() {
         if ((nr.docId || "") !== (local.docId || "")) linksAdded++;
         if ((nr.updateDocId || "") !== (local.updateDocId || "")) linksAdded++;
         if ((nr.firstName || "") !== (local.firstName || "") || (nr.pron || "") !== (local.pron || "") || (nr.perMonth || 0) !== (local.perMonth || 0)
-          || JSON.stringify(nr.motivators || []) !== JSON.stringify(local.motivators || []) || (nr.notes || "") !== (local.notes || "") || !!nr.notesHi !== !!local.notesHi) settingsChanged++;
+          || JSON.stringify(nr.motivators || []) !== JSON.stringify(local.motivators || []) || (nr.notes || "") !== (local.notes || "") || !!nr.notesHi !== !!local.notesHi
+          || JSON.stringify(nr.assessments || []) !== JSON.stringify(local.assessments || [])) settingsChanged++;
         if (extra.length > 0 || localGoals.length > beforeLen || updatedTpl || building !== (local.building || "") || owed.length !== owedOf(local).length) merged++;
         newSessions += extra.length;
       });
@@ -4818,10 +4819,10 @@ function App() {
         }
       }
       const libAdded = newLib.length - matLib.length;
-      if (added === 0 && merged === 0 && libAdded === 0 && schedFilled === 0 && linksAdded === 0 && settingsChanged === 0 && archAdded === 0 && !todayPlan && archMoved === 0 && restoredHere === 0) {
+      const inTpl = (Array.isArray(parsed.assessTemplates) ? parsed.assessTemplates : []).filter(t => t && typeof t.docId === "string" && !(store.assessTemplates || []).some(m => m.docId === t.docId));
+      if (added === 0 && merged === 0 && libAdded === 0 && schedFilled === 0 && linksAdded === 0 && settingsChanged === 0 && archAdded === 0 && !todayPlan && archMoved === 0 && restoredHere === 0 && inTpl.length === 0) {
         return { ok: false, text: "Nothing new in that code (already in sync?)" };
       }
-      const inTpl = (Array.isArray(parsed.assessTemplates) ? parsed.assessTemplates : []).filter(t => t && typeof t.docId === "string" && !(store.assessTemplates || []).some(m => m.docId === t.docId));
       setStore(prev => {
         const sessions = { ...prev.sessions };
         goalsSynced.forEach(id => {
@@ -4832,7 +4833,7 @@ function App() {
         const sel = live.has(prev.selectedId) ? prev.selectedId : "quick";
         return { ...prev, roster: newRoster, matLib: newLib, schedule: newSchedule, archivedStudents: newArchived, sessions, selectedId: sel, assessTemplates: [...(prev.assessTemplates || []), ...inTpl], ...(todayPlan || {}) };
       });
-      return { ok: true, text: `✓ ${added} added, ${merged} merged, ${newSessions} session${newSessions === 1 ? "" : "s"} synced${linksAdded ? `, ${linksAdded} Doc link${linksAdded === 1 ? "" : "s"} added` : ""}${archAdded ? `, ${archAdded} archived` : ""}${todayPlan ? ", today's plan copied" : ""}${archMoved ? `, ${archMoved} archived to match` : ""}${restoredHere ? `, ${restoredHere} restored to match` : ""}${keptArchived ? ` (${keptArchived} kept archived)` : ""}` };
+      return { ok: true, text: `✓ ${added} added, ${merged} merged, ${newSessions} session${newSessions === 1 ? "" : "s"} synced${linksAdded ? `, ${linksAdded} Doc link${linksAdded === 1 ? "" : "s"} added` : ""}${archAdded ? `, ${archAdded} archived` : ""}${todayPlan ? ", today's plan copied" : ""}${archMoved ? `, ${archMoved} archived to match` : ""}${restoredHere ? `, ${restoredHere} restored to match` : ""}${inTpl.length ? `, ${inTpl.length} assessment template${inTpl.length === 1 ? "" : "s"}` : ""}${keptArchived ? ` (${keptArchived} kept archived)` : ""}` };
     } catch {
       return { ok: false, text: "That doesn't look like a roster code — paste the whole thing" };
     }
