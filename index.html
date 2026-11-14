@@ -125,7 +125,11 @@ async function gfetch(url, token, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   if (r.status === 401) { clearGToken(); const e = new Error("signin"); e.code = 401; throw e; }
-  if (!r.ok) { const e = new Error("http " + r.status); e.code = r.status; throw e; }
+  if (!r.ok) {
+    const e = new Error("http " + r.status); e.code = r.status;
+    try { const j = await r.json(); const er = (j && j.error) || {}; e.reason = ((er.errors || [])[0] || {}).reason || (er.details || []).map(d => d.reason).filter(Boolean)[0] || er.status || ""; e.detail = er.message || ""; } catch {}
+    throw e;
+  }
   return r.json();
 }
 const MONTHS_RE = "(january|february|march|april|may|june|july|august|september|october|november|december)";
@@ -5050,8 +5054,16 @@ function App() {
         addAssessment(job.sid, job.label, r.id, job.month);
         setDocStatus({ sid: job.sid, ok: true, msg: `✓ Made "${r.name}" — it's at the top of ${job.studentName}'s screen` });
       } catch (e) {
-        setDocStatus({ sid: job.sid, ok: false, msg: e.code === 401 ? "Google sign-in expired — tap the template again." : e.code === 403 || e.code === 404 ? `Couldn't copy that template (error ${e.code}). Check the template link, and that Google gave the app Drive permission.` : "Couldn't make the copy — check your connection and try again." });
-        if (e.code === 401) clearGToken();
+        const why = `${e.reason || ""} ${e.detail || ""}`;
+        // Missing Drive permission on this sign-in: ask Google for it and retry automatically.
+        if (e.code === 403 && /insufficient|scope/i.test(why) && !job.retriedScope) { clearGToken(); startGoogleSignIn({ ...job, retriedScope: true }, DRIVE_SCOPE); return; }
+        let msg;
+        if (e.code === 401) { clearGToken(); msg = "Google sign-in expired — tap the template again."; }
+        else if (/accessNotConfigured|SERVICE_DISABLED|has not been used|is disabled/i.test(why)) msg = "Google Drive isn't turned on for the app yet (Drive API). It needs to be switched on in Google Cloud — then try again.";
+        else if (e.code === 404 || /notFound/i.test(why)) msg = "Couldn't find that template — check its link, and that it's in your herridge Google account.";
+        else if (e.code === 403) msg = `Google said no (403${e.reason ? ": " + e.reason : ""}). ${e.detail ? e.detail.slice(0, 160) : "Check the template link and Drive permission."}`;
+        else msg = "Couldn't make the copy — check your connection and try again.";
+        setDocStatus({ sid: job.sid, ok: false, msg });
       }
       return;
     }
