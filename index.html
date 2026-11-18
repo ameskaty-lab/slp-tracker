@@ -521,6 +521,8 @@ function weekPlanOf(st) {
   if (st.weekPlan && st.weekPlan.start === mk) return st.weekPlan;
   const days = {};
   WEEKDAYS.forEach(w => { days[w.d] = [...(((st.schedule || {})[w.d]) || [])]; });
+  const wd = new Date().getDay();
+  if (st.dayOverride && st.dayOverride.date === todayKey() && wd >= 1 && wd <= 5) days[wd] = [...st.dayOverride.ids];
   return { start: mk, days, missed: [], updatedAt: 0 };
 }
 const BUILDING_COLORS = ["#6366f1", "#0ea5e9", "#f59e0b", "#10b981", "#ec4899", "#8b5cf6", "#ef4444", "#14b8a6"];
@@ -4618,10 +4620,10 @@ function App() {
   const week = weekPlanOf(store);
   const isWeekday = weekday >= 1 && weekday <= 5;
   const usualToday = ((store.schedule || {})[weekday] || []).filter(id => rosterIds.has(id));
-  const legacyOverride = !!(store.dayOverride && store.dayOverride.date === tKey);
-  const todayIds = (legacyOverride ? store.dayOverride.ids : isWeekday ? (week.days[weekday] || []) : usualToday).filter(id => rosterIds.has(id));
+  const legacyOverride = !isWeekday && !!(store.dayOverride && store.dayOverride.date === tKey);
+  const todayIds = (isWeekday ? (week.days[weekday] || []) : legacyOverride ? store.dayOverride.ids : usualToday).filter(id => rosterIds.has(id));
   const overrideActive = legacyOverride || (isWeekday && JSON.stringify(todayIds) !== JSON.stringify(usualToday));
-  const setWeek = (fn) => setStore(prev => ({ ...prev, weekPlan: { ...fn(weekPlanOf(prev)), start: mondayKey(), updatedAt: Date.now() } }));
+  const setWeek = (fn) => setStore(prev => ({ ...prev, dayOverride: null, weekPlan: { ...fn(weekPlanOf(prev)), start: mondayKey(), updatedAt: Date.now() } }));
   const doneIds = (store.dayDone && store.dayDone.date === tKey ? store.dayDone.ids : []).filter(id => rosterIds.has(id));
   const todayStudents = todayIds.filter(id => !doneIds.includes(id)).map(id => roster.find(s => s.id === id));
   const doneStudents = doneIds.map(id => roster.find(s => s.id === id));
@@ -4637,7 +4639,7 @@ function App() {
     if (wd >= 1 && wd <= 5) {
       // Weekdays: today's list lives in this week's plan.
       const w = weekPlanOf(prev);
-      const base = legacy ? prev.dayOverride.ids : (w.days[wd] || []);
+      const base = w.days[wd] || [];
       return { ...prev, dayOverride: null, weekPlan: { ...w, days: { ...w.days, [wd]: fn(base.filter(id => ids.has(id))) }, updatedAt: Date.now() } };
     }
     const base = legacy ? prev.dayOverride.ids : (((prev.schedule || {})[wd]) || []);
