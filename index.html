@@ -3884,7 +3884,7 @@ function CompactLine({ goal, index, onTap, at, onUpdate, missed }) {
   const supTag = (goal.usedSupport || "ind") !== "ind" ? goal.usedSupport : "";
   return (
     <div onClick={onTap} style={{
-      background: goal.done ? "#f1f5f9" : missed ? "#fffbeb" : "#fff", border: `1.5px solid ${missed && !goal.done ? "#fbbf24" : "#e2e8f0"}`, borderRadius: 10,
+      background: goal.done ? "#f1f5f9" : missed ? "#fffbeb" : "#fff", border: `1.5px solid ${missed && !goal.done ? "#fbbf24" : "#e2e8f0"}`, borderRadius: 10, ...(missed && !goal.done ? { borderLeft: "5px solid #f59e0b" } : {}),
       padding: "9px 12px", marginBottom: 6, display: "flex", alignItems: "center", gap: 8,
       cursor: "pointer", opacity: goal.done ? 0.7 : 1,
     }}>
@@ -3894,7 +3894,6 @@ function CompactLine({ goal, index, onTap, at, onUpdate, missed }) {
       {at && <span style={{ fontSize: 12, flexShrink: 0 }}>🎯</span>}
       {goal.status === "screening" && <span style={{ fontSize: 9, fontWeight: 800, color: "#b45309", flexShrink: 0 }}>SCR</span>}
       {goal.status === "new" && <span style={{ fontSize: 9, fontWeight: 800, color: "#15803d", flexShrink: 0 }}>NEW</span>}
-      {missed && !goal.done && <span title="Not worked on last session" style={{ fontSize: 9, fontWeight: 800, color: "#b45309", flexShrink: 0 }}>MISSED</span>}
 
       {goal.done && <span style={{ fontSize: 11, color: "#16a34a", fontWeight: 700, flexShrink: 0 }}>✓</span>}
       <span style={{ fontSize: 13, fontWeight: 700, color: "#4f46e5", fontFamily: "ui-monospace, Menlo, monospace", flexShrink: 0 }}>{s}</span>
