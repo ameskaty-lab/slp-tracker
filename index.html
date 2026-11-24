@@ -1354,14 +1354,21 @@ function MaterialsRow({ goal, onUpdate }) {
 
 // One building's group in a day list, with controls to reorder the group.
 // This week, like color-coded boxes on a week template: move a kid or a whole building to another day or to "Missed".
-function WeekBoard({ week, roster, schedule, setWeek, onOweMakeup, doneIds, todayWd, sessions, onMarkSeen, onToggleAbsent, onMarkDay }) {
-  // Status for one kid on one day: "seen" | "absent" | "clinician" | "".
+const OTHER_REASONS = {
+  holiday: { icon: "🎉", label: "Holiday" },
+  fieldtrip: { icon: "🚌", label: "Field trip" },
+  unavailable: { icon: "⏸️", label: "Unavailable" },
+};
+
+function WeekBoard({ week, roster, schedule, setWeek, onOweMakeup, onToggleOwed, doneIds, todayWd, sessions, onMarkSeen, onToggleAbsent, onMarkDay }) {
+  // Status for one kid on one day: "seen" | "absent" | "clinician" | "holiday" | "fieldtrip" | "unavailable" | "".
   const statusOf = (id, day) => {
     if (day === todayWd) {
       if (doneIds.includes(id)) return "seen";
       const ss = (sessions || {})[id] || {};
       if (ss.absent && ss.absentDate === todayKey()) return ss.absentBy === "clinician" ? "clinician" : "absent";
-      return "";
+      const r = ((week.marks || {})[`${day}:${id}`]) || "";
+      return OTHER_REASONS[r] ? r : "";
     }
     return ((week.marks || {})[`${day}:${id}`]) || "";
   };
@@ -1373,10 +1380,13 @@ function WeekBoard({ week, roster, schedule, setWeek, onOweMakeup, doneIds, toda
       const isAbs = cur === "absent" || cur === "clinician", wantAbs = next === "absent" || next === "clinician";
       if (isAbs && (!wantAbs || cur !== next)) onToggleAbsent(id, cur === "clinician" ? "clinician" : "");
       if (wantAbs && (!isAbs || cur !== next)) onToggleAbsent(id, next === "clinician" ? "clinician" : "");
+      // Holiday / field trip / unavailable for today live in the week marks.
+      if (OTHER_REASONS[cur] || OTHER_REASONS[next]) onMarkDay(id, day, OTHER_REASONS[cur] ? cur : "", OTHER_REASONS[next] ? next : "", weekDayKey(week.start, day));
       return;
     }
     onMarkDay(id, day, cur, next, weekDayKey(week.start, day));
   };
+  const owedOn = (id, dateKey) => owedOf(roster.find(s => s.id === id) || {}).includes(dateKey);
   const markBtn = (id, day, kind, icon, col, title) => {
     const on = statusOf(id, day) === kind;
     return <button key={kind} onClick={() => setStatus(id, day, kind)} title={title} style={{ ...smallBtn, padding: "3px 6px", ...(on ? { background: col, borderColor: col, color: "#fff" } : {}) }}>{icon}</button>;
@@ -1403,26 +1413,48 @@ function WeekBoard({ week, roster, schedule, setWeek, onOweMakeup, doneIds, toda
       <div key={b} style={{ border: `2px solid ${col}`, borderRadius: 10, marginBottom: 6, overflow: "hidden", background: "#fff" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, background: col, color: "#fff", padding: "4px 8px" }}>
           <span style={{ fontSize: 12, fontWeight: 800, flex: 1 }}>{b} ({ids.length})</span>
-          <select value="" onChange={e => { const v = e.target.value; if (v) moveIds(ids, from, v === "missed" ? "missed" : Number(v)); }} style={{ ...sel, maxWidth: 120 }}>
+          <select value="" onChange={e => {
+            const v = e.target.value; if (!v) return;
+            if (v.startsWith("r:")) { const r = v.slice(2); ids.forEach(id => { if (from === "missed") setWeek(w => ({ ...w, missed: (w.missed || []).map(x => x.id === id ? { ...x, reason: r } : x) })); else if (statusOf(id, from) !== r) setStatus(id, from, r); }); return; }
+            moveIds(ids, from, v === "missed" ? "missed" : Number(v));
+          }} style={{ ...sel, maxWidth: 120 }}>
             <option value="">Move all…</option>{dayOpts(from)}
+            {Object.entries(OTHER_REASONS).map(([k, r]) => <option key={k} value={"r:" + k}>{r.icon} All: {r.label}</option>)}
           </select>
         </div>
         {ids.map(id => {
           const m = from === "missed" ? (week.missed || []).find(x => x.id === id) : null;
           const st = from === "missed" ? "" : statusOf(id, from);
           const done = st === "seen";
+          const other = OTHER_REASONS[st];
+          const mReason = m && OTHER_REASONS[m.reason];
+          const otherDate = other ? weekDayKey(week.start, from) : "";
           return (
-            <div key={id} style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 8px", borderTop: "1px solid #f1f5f9", background: st === "absent" || st === "clinician" ? "#fff5f5" : done ? "#f0fdf4" : "#fff" }}>
-              <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: done ? "#16a34a" : st ? "#dc2626" : "#1e293b" }}>{name(id)}
+            <div key={id} style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 8px", borderTop: "1px solid #f1f5f9", flexWrap: "wrap", background: st === "absent" || st === "clinician" ? "#fff5f5" : other ? "#f5f3ff" : done ? "#f0fdf4" : "#fff" }}>
+              <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: done ? "#16a34a" : other ? "#6d28d9" : st ? "#dc2626" : "#1e293b" }}>{name(id)}
                 {st === "absent" && <span style={{ fontSize: 10, fontWeight: 700 }}> · absent</span>}
                 {st === "clinician" && <span style={{ fontSize: 10, fontWeight: 700 }}> · I missed</span>}
+                {other && <span style={{ fontSize: 10, fontWeight: 700 }}> · {other.icon} {other.label}</span>}
                 {m && m.day && <span style={{ fontSize: 11, fontWeight: 600, color: "#94a3b8" }}> · missed {WEEKDAYS.find(w => w.d === m.day)?.s}</span>}
+                {mReason && <span style={{ fontSize: 11, fontWeight: 700, color: "#6d28d9" }}> · {mReason.icon} {mReason.label}</span>}
               </span>
+              {other && <button onClick={() => onToggleOwed(id, otherDate)} title="Add / remove a makeup they're owed for this day"
+                style={{ ...smallBtn, ...(owedOn(id, otherDate) ? { background: "#0ea5e9", borderColor: "#0ea5e9", color: "#fff" } : { color: "#0369a1", borderColor: "#bae6fd" }) }}>🔁{owedOn(id, otherDate) ? " owed" : " Makeup?"}</button>}
+              {m && <select value={m.reason || ""} onChange={e => { const r = e.target.value; setWeek(w => ({ ...w, missed: (w.missed || []).map(x => x.id === id ? { ...x, reason: r } : x) })); }} style={{ ...sel, maxWidth: 90 }}>
+                <option value="">Why…</option>
+                {Object.entries(OTHER_REASONS).map(([k, r]) => <option key={k} value={k}>{r.icon} {r.label}</option>)}
+              </select>}
               {m && m.day && <button onClick={() => { onOweMakeup(id, weekDayKey(week.start, m.day)); setWeek(w => ({ ...w, missed: (w.missed || []).filter(x => x.id !== id) })); }} style={{ ...smallBtn, color: "#0369a1", borderColor: "#bae6fd" }}>🔁 Owe makeup</button>}
               {m && <button onClick={() => setWeek(w => ({ ...w, missed: (w.missed || []).filter(x => x.id !== id) }))} title="Clear from Missed" style={smallBtn}>✕</button>}
               {from !== "missed" && markBtn(id, from, "seen", "✓", "#16a34a", "Seen")}
               {from !== "missed" && markBtn(id, from, "absent", "🚫", "#ef4444", "Student absent")}
               {from !== "missed" && markBtn(id, from, "clinician", "🩺", "#f97316", "I missed this session")}
+              {from !== "missed" && <select value={other ? st : ""} onChange={e => setStatus(id, from, e.target.value || st)} title="Holiday, field trip, or unavailable"
+                style={{ ...sel, maxWidth: 46, ...(other ? { background: "#7c3aed", borderColor: "#7c3aed", color: "#fff" } : {}) }}>
+                <option value="">⋯</option>
+                {Object.entries(OTHER_REASONS).map(([k, r]) => <option key={k} value={k}>{r.icon} {r.label}</option>)}
+                {other && <option value="">✕ Clear</option>}
+              </select>}
               <select value="" onChange={e => { const v = e.target.value; if (v) moveIds([id], from, v === "missed" ? "missed" : Number(v)); }} style={{ ...sel, maxWidth: 74 }}>
                 <option value="">Move…</option>{dayOpts(from)}
               </select>
@@ -1450,6 +1482,7 @@ function WeekBoard({ week, roster, schedule, setWeek, onOweMakeup, doneIds, toda
               <select value="" onChange={e => {
                 const v = e.target.value; if (!v) return;
                 if (v === "reset") setWeek(x => ({ ...x, days: { ...x.days, [w.d]: [...(((schedule || {})[w.d]) || [])] } }));
+                else if (v.startsWith("r:")) { const r = v.slice(2); ids.forEach(id => { if (statusOf(id, w.d) !== r) setStatus(id, w.d, r); }); }
                 else if (v.startsWith("swap")) { const o = Number(v.slice(4)); setWeek(x => ({ ...x, days: { ...x.days, [w.d]: x.days[o] || [], [o]: x.days[w.d] || [] } })); }
                 else moveIds(ids, w.d, v === "missed" ? "missed" : Number(v));
               }} style={{ ...sel, maxWidth: 130 }}>
@@ -1457,6 +1490,7 @@ function WeekBoard({ week, roster, schedule, setWeek, onOweMakeup, doneIds, toda
                 {WEEKDAYS.filter(o => o.d !== w.d).map(o => <option key={"s" + o.d} value={"swap" + o.d}>⇄ Swap with {o.s}</option>)}
                 {ids.length > 0 && WEEKDAYS.filter(o => o.d !== w.d).map(o => <option key={"m" + o.d} value={o.d}>→ Move all to {o.s}</option>)}
                 {ids.length > 0 && <option value="missed">→ All to Missed</option>}
+                {ids.length > 0 && Object.entries(OTHER_REASONS).map(([k, r]) => <option key={k} value={"r:" + k}>{r.icon} Whole day: {r.label}</option>)}
                 {changed && <option value="reset">↺ Back to usual</option>}
               </select>
             </div>
@@ -1466,7 +1500,7 @@ function WeekBoard({ week, roster, schedule, setWeek, onOweMakeup, doneIds, toda
       })}
       <div style={{ background: "#fff7ed", border: "2px dashed #fdba74", borderRadius: 12, padding: 8, marginBottom: 10 }}>
         <div style={{ fontSize: 14, fontWeight: 800, color: "#c2410c", marginBottom: 4 }}>📥 Missed this week ({missedIds.length})</div>
-        <div style={{ fontSize: 11, color: "#9a3412", marginBottom: 6 }}>Kids you didn't get to. Tap 🔁 to add a makeup they're owed, ✕ to clear, or move them to a day.</div>
+        <div style={{ fontSize: 11, color: "#9a3412", marginBottom: 6 }}>Kids you didn't get to. Pick "Why…" (holiday, field trip, unavailable), tap 🔁 to add a makeup they're owed, ✕ to clear, or move them to a day.</div>
         {missedIds.length === 0 ? <div style={{ fontSize: 12, color: "#94a3b8" }}>Nobody</div> : groupsOf(missedIds).map(([b, gids]) => box(b, gids, "missed"))}
       </div>
     </>
@@ -2314,7 +2348,7 @@ function MonthlyUpdates({ roster, monthly, setMonthly, onLoadDoc, onSetFirstName
   );
 }
 
-function PlanPanel({ roster, week, setWeek, onOweMakeup, onMarkSeen, onMarkDay, todayIds, overrideActive, setTodayIds, resetToday, schedule, setDayIds, matLib, setLib, onOpenStudent, onClose, sessions, onToggleAbsent, doneIds, onUndoDone, onClinicianAbsent, onApplyGoals, onRestoreGoal, onDeleteArchived, onSendMonth, initialTab, monthly, setMonthly, onLoadMonthly, onSetFirstName, monthlyStatus, onSendUpdate, onLinkUpdateDoc, onSetPerMonth, archivedStudents, onSetMakeup, onOpenAssess }) {
+function PlanPanel({ roster, week, setWeek, onOweMakeup, onToggleOwed, onMarkSeen, onMarkDay, todayIds, overrideActive, setTodayIds, resetToday, schedule, setDayIds, matLib, setLib, onOpenStudent, onClose, sessions, onToggleAbsent, doneIds, onUndoDone, onClinicianAbsent, onApplyGoals, onRestoreGoal, onDeleteArchived, onSendMonth, initialTab, monthly, setMonthly, onLoadMonthly, onSetFirstName, monthlyStatus, onSendUpdate, onLinkUpdateDoc, onSetPerMonth, archivedStudents, onSetMakeup, onOpenAssess }) {
   const [tab, setTab] = useState(initialTab || "today");
   const [makeupPick, setMakeupPick] = useState(null);
   const [weekView, setWeekView] = useState("this");
@@ -2340,8 +2374,8 @@ function PlanPanel({ roster, week, setWeek, onOweMakeup, onMarkSeen, onMarkDay, 
     const mk = (sessions[s.id] || {}).makeupFor || "";
     return (
       <div key={s.id} style={card}>
-        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-          <button onClick={() => onOpenStudent(s.id)} style={{ background: "none", border: "none", padding: 0, fontSize: 15, fontWeight: 800, color: "#1e293b", cursor: "pointer", fontFamily: "inherit", flex: 1, textAlign: "left", minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+          <button onClick={() => onOpenStudent(s.id)} style={{ background: "none", border: "none", padding: "0 0 4px", fontSize: 15, fontWeight: 800, color: "#1e293b", cursor: "pointer", fontFamily: "inherit", flex: "1 0 100%", textAlign: "left", minWidth: 0 }}>
             {s.name} ›
             {owedOf(s).length > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: "#0369a1", background: "#e0f2fe", borderRadius: 999, padding: "1px 7px", marginLeft: 6, whiteSpace: "nowrap", display: "inline-block" }}>🔁 {owedOf(s).length}</span>}
           </button>
@@ -2352,6 +2386,18 @@ function PlanPanel({ roster, week, setWeek, onOweMakeup, onMarkSeen, onMarkDay, 
               <button onClick={() => onToggleAbsent(s.id, "student")} title="Student absent" style={smallBtn}>🚫</button>
               <button onClick={() => onToggleAbsent(s.id, "clinician")} title="I missed this session" style={smallBtn}>🩺</button>
               <button onClick={() => onMarkSeen(s.id, true)} title="Seen — notes done on another device" style={{ ...smallBtn, color: "#16a34a", borderColor: "#bbf7d0" }}>✓</button>
+              {(() => {
+                const wdT = new Date().getDay();
+                const r = (wdT >= 1 && wdT <= 5) ? ((week.marks || {})[`${wdT}:${s.id}`] || "") : "";
+                const on = OTHER_REASONS[r];
+                return <select value={on ? r : ""} onChange={e => onMarkDay(s.id, wdT, on ? r : "", e.target.value, todayKey())} title="Holiday, field trip, or unavailable"
+                  disabled={!(wdT >= 1 && wdT <= 5)}
+                  style={{ ...smallBtn, maxWidth: on ? 120 : 44, ...(on ? { background: "#7c3aed", borderColor: "#7c3aed", color: "#fff" } : {}) }}>
+                  <option value="">⋯</option>
+                  {Object.entries(OTHER_REASONS).map(([k, x]) => <option key={k} value={k}>{x.icon} {x.label}</option>)}
+                  {on && <option value="">✕ Clear</option>}
+                </select>;
+              })()}
               <button onClick={() => onOpenAssess(s.id)} title="Assessments" style={{ ...smallBtn, color: "#7c3aed", borderColor: "#ddd6fe", ...((s.assessments || []).some(a => !a.done) ? { background: "#f5f3ff" } : {}) }}>📋{(s.assessments || []).some(a => !a.done) ? " " + (s.assessments || []).filter(a => !a.done).length : ""}</button>
               <button onClick={() => setMakeupPick(makeupPick === s.id ? null : s.id)} title="Mark as a makeup"
                 style={{ ...smallBtn, ...(mk ? { background: "#0ea5e9", borderColor: "#0ea5e9", color: "#fff" } : { color: "#0369a1", borderColor: "#bae6fd" }) }}>🔁{mk ? " ✓" : ""}</button>
@@ -2535,7 +2581,7 @@ function PlanPanel({ roster, week, setWeek, onOweMakeup, onMarkSeen, onMarkDay, 
             </div>
           )}
           {tab === "week" && weekView === "this" && (
-            <WeekBoard week={week} roster={roster} schedule={schedule} setWeek={setWeek} onOweMakeup={onOweMakeup} doneIds={doneIds} todayWd={wd}
+            <WeekBoard week={week} roster={roster} schedule={schedule} setWeek={setWeek} onOweMakeup={onOweMakeup} onToggleOwed={onToggleOwed} doneIds={doneIds} todayWd={wd}
               sessions={sessions} onMarkSeen={onMarkSeen} onToggleAbsent={onToggleAbsent} onMarkDay={onMarkDay} />
           )}
           {tab === "week" && weekView === "usual" && (
@@ -5598,6 +5644,7 @@ function App() {
             const roster = prev.roster.map(s => s.id !== id ? s : { ...s, owed: isAbs && !wasAbs ? addOwedDate(owedOf(s), dateKey) : !isAbs && wasAbs ? owedOf(s).filter(d => d !== dateKey) : owedOf(s) });
             return { ...prev, roster, weekPlan: { ...w, marks, updatedAt: Date.now() } };
           })}
+          onToggleOwed={(id, dateKey) => setStore(prev => ({ ...prev, roster: prev.roster.map(s => s.id !== id ? s : { ...s, owed: owedOf(s).includes(dateKey) ? owedOf(s).filter(d => d !== dateKey) : addOwedDate(owedOf(s), dateKey) }) }))}
           onOweMakeup={(id, dateKey) => setStore(prev => ({ ...prev, roster: prev.roster.map(s => s.id !== id ? s : { ...s, owed: [...new Set([...owedOf(s), dateKey])].sort() }) }))}
           todayIds={todayIds}
           overrideActive={overrideActive}
